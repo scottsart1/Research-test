@@ -1,0 +1,12 @@
+.env
+data/
+*.pyc
+__pycache__/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.pkl
+*.model
