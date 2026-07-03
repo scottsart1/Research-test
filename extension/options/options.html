@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Autofill Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Job Application Autofill — Options</h1>
+
+      <section class="card">
+        <h2>1. Work authorization preset <span class="lock">🔒 locked design</span></h2>
+        <p class="muted">This is Emily's attestation. It drives every work-authorization answer (spec §4.3) and is never inferred from free text.</p>
+        <div class="preset-row" id="preset-row">
+          <label class="preset-option">
+            <input type="radio" name="preset" value="f1_opt" />
+            <span>F-1 OPT</span>
+          </label>
+          <label class="preset-option">
+            <input type="radio" name="preset" value="permanent_resident" />
+            <span>Permanent Resident</span>
+          </label>
+          <label class="preset-option">
+            <input type="radio" name="preset" value="citizen" />
+            <span>US Citizen</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>2. Claude API (optional, Tier 4 fallback)</h2>
+        <p class="muted">Used only for question→key <em>mapping</em> when local matching fails. Never used for answer generation, never used for work-authorization questions. Only labels + options are sent — never bank values.</p>
+        <label class="field">
+          <input type="checkbox" id="api-enabled" />
+          Enable Claude API fallback
+        </label>
+        <label class="field">
+          <span>Anthropic API key</span>
+          <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>3. Matching thresholds</h2>
+        <label class="field">
+          <span>Fuzzy fill minimum: <output id="fuzzy-fill-val">0.72</output></span>
+          <input type="range" id="fuzzy-fill" min="0.5" max="1" step="0.01" value="0.72" />
+        </label>
+        <label class="field">
+          <span>Fuzzy warn minimum: <output id="fuzzy-warn-val">0.55</output></span>
+          <input type="range" id="fuzzy-warn" min="0.3" max="0.9" step="0.01" value="0.55" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>4. ATS adapters</h2>
+        <div id="ats-toggles" class="ats-grid"></div>
+      </section>
+
+      <section class="card">
+        <h2>5. Answer bank</h2>
+        <p class="muted"><span id="placeholder-count"></span></p>
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="quick">Quick fields</button>
+          <button class="tab-btn" data-tab="json">Raw JSON</button>
+        </div>
+
+        <div id="tab-quick" class="tab-panel active">
+          <div id="quick-fields"></div>
+        </div>
+
+        <div id="tab-json" class="tab-panel">
+          <textarea id="bank-json" rows="24" spellcheck="false"></textarea>
+          <div id="json-validation" class="validation"></div>
+        </div>
+
+        <div class="button-row">
+          <button id="save-btn" class="primary">Save</button>
+          <button id="export-btn">Export JSON</button>
+          <label class="file-btn">
+            Import JSON
+            <input type="file" id="import-input" accept="application/json" hidden />
+          </label>
+        </div>
+      </section>
+
+      <div id="save-status" class="save-status"></div>
+    </div>
+    <script src="../lib/fuzzy.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

@@ -1,0 +1,166 @@
+{
+  "identity": {
+    "first_name": "Emily",
+    "last_name": "Terry",
+    "full_name": "Emily Terry",
+    "email": "emilyterry615@gmail.com",
+    "phone": "+17179034428",
+    "phone_formatted": "(717) 903-4428",
+    "address_line1": "«street — confirm with Emily»",
+    "city": "Washington",
+    "state": "District of Columbia",
+    "state_abbr": "DC",
+    "zip": "«zip — confirm with Emily»",
+    "country": "United States",
+    "linkedin": "https://linkedin.com/in/t-elle",
+    "portfolio": "https://esha7498.github.io/",
+    "github": "«confirm — portfolio is a github.io page; add github profile URL if distinct»",
+    "how_heard": "Company website",
+    "preferred_name": "Emily",
+    "pronouns": "«She/Her or skip»"
+  },
+  "education": [
+    {
+      "school": "American University",
+      "degree": "Master of Science",
+      "degree_short": "Master's",
+      "degree_level": "Master's Degree",
+      "field": "Data Science",
+      "gpa": "3.9",
+      "start": "2025-01",
+      "end": "2026-05",
+      "graduated": true,
+      "city": "Washington",
+      "state": "DC",
+      "country": "United States"
+    },
+    {
+      "school": "Pennsylvania State University",
+      "degree": "Bachelor of Science",
+      "degree_short": "Bachelor's",
+      "degree_level": "Bachelor's Degree",
+      "field": "Data Science",
+      "gpa": "3.5",
+      "start": "2018-08",
+      "end": "2023-05",
+      "graduated": true,
+      "city": "State College",
+      "state": "PA",
+      "country": "United States"
+    }
+  ],
+  "highest_education": "Master's Degree",
+  "immigration_status": "",
+  "experience": [
+    {
+      "title": "Data Analyst",
+      "company": "Perry International Inc.",
+      "location_city": "New York",
+      "location_state": "NY",
+      "country": "United States",
+      "start": "2024-02",
+      "end": "2025-01",
+      "current": false,
+      "summary": "Modeled cross-market KPIs (churn, seasonality-adjusted capital efficiency) via statsmodels OLS, cutting digital footprint costs 15%. Built XGBoost demand-forecast models (MAPE < 17%) reducing stock-outs 10%. Deployed automated ELT pipelines feeding Tableau dashboards, eliminating reporting latency."
+    },
+    {
+      "title": "Data Scientist (FP&A)",
+      "company": "Koch Industries",
+      "location_city": "Auburn Hills",
+      "location_state": "MI",
+      "country": "United States",
+      "start": "2023-05",
+      "end": "2024-02",
+      "current": false,
+      "summary": "Built modular Python ETL pipelines standardizing analytics across five Guardian Glass plants, cutting data-prep overhead 40%. Deployed Dockerized Snowflake-connected R Shiny dashboards saving 20 hours/month. Engineered Isolation Forest anomaly detection on energy streams, reducing utility costs 4%."
+    },
+    {
+      "title": "Teaching Assistant — Advanced Machine Learning; Data Management",
+      "company": "American University",
+      "location_city": "Washington",
+      "location_state": "DC",
+      "country": "United States",
+      "start": "2025-01",
+      "end": "2026-05",
+      "current": false,
+      "summary": "TA for graduate Advanced Machine Learning and Data Management courses.",
+      "include_policy": "only when form requires 3+ entries or asks for academic experience"
+    }
+  ],
+  "total_professional_years": "2",
+  "skills_yoe": {
+    "python": 5,
+    "sql": 4,
+    "r": 4,
+    "machine_learning": 4,
+    "deep_learning": 3,
+    "nlp": 3,
+    "pytorch": 3,
+    "tensorflow": 3,
+    "scikit-learn": 4,
+    "pandas": 5,
+    "statsmodels": 3,
+    "tableau": 2,
+    "power_bi": 2,
+    "r_shiny": 2,
+    "snowflake": 2,
+    "docker": 2,
+    "git": 5,
+    "etl": 2,
+    "data_visualization": 4,
+    "statistics": 5,
+    "aws": "«confirm — 0 or coursework-only»",
+    "spark": "«confirm»",
+    "excel": "«confirm, forms ask»"
+  },
+  "skills_flat_list": "Python, SQL, R, PyTorch, TensorFlow, scikit-learn, pandas, statsmodels, Tableau, Power BI, R Shiny, Snowflake, Docker, Git, NLP (TF-IDF, Word2Vec, NER, LDA), XGBoost, OpenCV",
+  "certifications": "NVIDIA DLI: Accelerated Computing with CUDA Python; Accelerating End-to-End Data Science Workflows; Generative & Agentic AI; Building Deep Research Agents; Multi-Modal Data Curation",
+  "clearance": {
+    "has_clearance": "No",
+    "clearance_level": "None",
+    "willing_to_obtain": "«Yes/No — Emily's call; note clearance eligibility generally requires citizenship or PR status, so this interacts with immigration_status: if preset is f1_opt, auto-answer eligibility questions No and flag clearance-required roles in the panel»",
+    "held_clearance_past": "No"
+  },
+  "federal": {
+    "current_federal_employee": "No",
+    "former_federal_employee": "No",
+    "special_hiring_authority": "No"
+  },
+  "compensation": {
+    "desired_salary_annual": "«number — set policy»",
+    "salary_answer_text": "«'Negotiable' where free-text accepted; number where numeric required»",
+    "salary_min": "«number»",
+    "salary_max": "«number»",
+    "hourly_ok": false
+  },
+  "logistics": {
+    "available_start": "«'Two weeks from offer' / date»",
+    "willing_to_relocate": "«Yes/No»",
+    "remote_hybrid_onsite": "«preference»",
+    "commutable_note": "Washington, DC metro",
+    "over_18": "Yes",
+    "worked_here_before": "No",
+    "relatives_at_company": "No",
+    "non_compete": "No",
+    "background_check_consent": "Yes",
+    "drug_test_consent": "Yes",
+    "criminal_record": "«answer per policy»",
+    "military_veteran_service": "No"
+  },
+  "eeo": {
+    "gender": "«Female / Decline»",
+    "race_ethnicity": "«value / Decline»",
+    "hispanic_latino": "«Yes/No/Decline»",
+    "veteran_status": "I am not a protected veteran",
+    "disability_status": "«per Emily — see §5.6 exact strings»"
+  },
+  "stock_answers": {
+    "why_this_company": { "mode": "NEEDS_REVIEW" },
+    "why_this_role": { "mode": "NEEDS_REVIEW" },
+    "anything_else": ""
+  },
+  "documents": {
+    "resume_filename": "Resume_Emily_Terry.pdf",
+    "cover_letter_policy": "skip_unless_required"
+  }
+}
