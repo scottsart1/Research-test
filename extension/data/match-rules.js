@@ -102,10 +102,27 @@
   const SKILL_ALIAS_RE = SKILL_ALIASES.map(([frag, key]) => ({ re: new RegExp(frag), key }));
   const DATA_ADJACENT_RE = /data|analy|scien|machine learning|\bml\b|engineer/;
 
+  // Section-heading signal that a field sits inside a repeatable
+  // work-history block (iCIMS "Professional Experience", Workday "Work
+  // Experience", etc.) rather than the identity/contact section. resolve()
+  // callbacks receive label+context, so this can gate on the heading.
+  const EXPERIENCE_CONTEXT_RE = /(professional|work|employment) (experience|history)|employment record|previous employer/;
+  const EDUCATION_CONTEXT_RE = /education|academic|school history/;
+
   const TIER2_RULES = [
+    // --- Account creation / credentials: never autofill, always flag.
+    // iCIMS candidate-profile pages open with a "Create a login" section;
+    // passwords are the human's to invent and the login choice is theirs. ---
+    { name: 'password', test: /password/, special: 'always_review' },
+    { name: 'login_username', test: /^log[- ]?in\b|^username/, special: 'always_review' },
+
     // --- Per-skill years-of-experience (§4.5) ---
     {
       name: 'skill_yoe',
+      // labelOnly: section headings like "Professional Experience (last 10
+      // years)" contain both tokens and must not trip this rule for every
+      // field in the block; a real YoE question carries them in its label.
+      labelOnly: true,
       test: /years?.{0,25}(experience|work(ing)?).{0,25}(with|in|using)?/,
       resolve(hay) {
         for (const { re, key } of SKILL_ALIAS_RE) {
@@ -138,8 +155,61 @@
     { name: 'salary_desired', test: /^(desired|expected|target|minimum) (salary|compensation|pay|base|rate)/, key: 'compensation.desired_salary_annual' },
     { name: 'salary_expectation', test: /salary (expectation|requirement)s?/, key: 'compensation.salary_answer_text' },
 
-    // --- Start date variants ---
-    { name: 'start_date', test: /(earliest|available|preferred).{0,20}start|start date|when.{0,15}(start|begin|available)|notice period/, key: 'logistics.available_start' },
+    // --- Repeatable experience blocks (spec §4.4; block N handled by
+    // Matcher.applyRepeatableBlockIndexing over these index-0 keys) ---
+    { name: 'employer', test: /^employer\b|company name|name of (the )?(company|employer)/, key: 'experience.0.company' },
+    {
+      name: 'experience_title',
+      test: /^(job )?title$|position title/,
+      resolve(hay) {
+        return EXPERIENCE_CONTEXT_RE.test(hay) ? 'experience.0.title' : null;
+      },
+    },
+    {
+      name: 'experience_description',
+      test: /^description$|job duties|responsibilities/,
+      resolve(hay) {
+        return EXPERIENCE_CONTEXT_RE.test(hay) ? 'experience.0.summary' : null;
+      },
+    },
+    { name: 'reason_for_leaving', test: /reason for leaving/, special: 'always_review' },
+    {
+      name: 'block_end_date',
+      test: /end date/,
+      resolve(hay) {
+        if (EXPERIENCE_CONTEXT_RE.test(hay)) return 'experience.0.end';
+        if (EDUCATION_CONTEXT_RE.test(hay)) return 'education.0.end';
+        return null;
+      },
+    },
+
+    // --- Start date variants (experience/education block start dates take
+    // the block key; anything else is the availability question) ---
+    {
+      name: 'start_date',
+      test: /(earliest|available|preferred).{0,20}start|start date|when.{0,15}(start|begin|available)|notice period/,
+      resolve(hay) {
+        if (EXPERIENCE_CONTEXT_RE.test(hay)) return 'experience.0.start';
+        if (EDUCATION_CONTEXT_RE.test(hay)) return 'education.0.start';
+        return 'logistics.available_start';
+      },
+    },
+
+    // --- Repeatable education blocks (spec §4.2; same block-indexing
+    // mechanism as experience) ---
+    { name: 'school', test: /(name of )?(school|university|college|institution)( name)?$/, key: 'education.0.school' },
+    {
+      name: 'degree',
+      test: /^degree$|degree (earned|obtained|type|level)|level of degree/,
+      resolve(hay, field) {
+        // Selects list standardized levels ("Master's Degree"); free text
+        // wants the actual degree name ("Master of Science").
+        const hasOptions = field && field.options && field.options.length > 0;
+        return hasOptions ? 'education.0.degree_level' : 'education.0.degree';
+      },
+    },
+    { name: 'major', test: /^major$|field of study|area of study|concentration|course of study/, key: 'education.0.field' },
+    { name: 'did_graduate', test: /did you (graduate|complete|obtain|earn)|degree (completed|awarded|conferred)/, key: '__literal:Yes' },
 
     // --- Location variants ---
     { name: 'relocate', test: /(willing|open).{0,20}relocat|relocation/, key: 'logistics.willing_to_relocate' },
@@ -154,7 +224,9 @@
     { name: 'graduation_date', test: /graduation (date|year|month)/, key: 'education.0.end' },
 
     // --- Referral / source ---
-    { name: 'referral_yesno', test: /(referred|referral|employee referr)/, special: 'referral' },
+    // Word boundaries required: "referred" is a substring of "Preferred
+    // Name", which must never route here.
+    { name: 'referral_yesno', test: /\b(referred|referral)\b|employee referr/, special: 'referral' },
     { name: 'how_heard', test: /how did you (hear|find|learn)/, key: 'identity.how_heard' },
 
     // --- Identity basics ---
@@ -166,11 +238,32 @@
     { name: 'linkedin', test: /linkedin/, key: 'identity.linkedin' },
     { name: 'portfolio', test: /portfolio|personal website/, key: 'identity.portfolio' },
     { name: 'github', test: /github/, key: 'identity.github' },
-    { name: 'address', test: /street address|address line ?1/, key: 'identity.address_line1' },
-    { name: 'city', test: /^city$|town/, key: 'identity.city' },
-    { name: 'state', test: /^state$|state\/province/, key: 'identity.state' },
-    { name: 'zip', test: /zip ?code|postal code/, key: 'identity.zip' },
-    { name: 'country', test: /^country$/, key: 'identity.country' },
+    { name: 'address', test: /street address|address line ?1|^address 1$|^address$/, key: 'identity.address_line1' },
+    {
+      name: 'city',
+      test: /^city$|town/,
+      resolve(hay) {
+        return EXPERIENCE_CONTEXT_RE.test(hay) ? 'experience.0.location_city' : 'identity.city';
+      },
+    },
+    {
+      name: 'state',
+      test: /^state$|state\/province|state\s*\/\s*province/,
+      resolve(hay) {
+        return EXPERIENCE_CONTEXT_RE.test(hay) ? 'experience.0.location_state' : 'identity.state';
+      },
+    },
+    { name: 'zip', test: /zip ?(\/? ?postal )?code|postal code/, key: 'identity.zip' },
+    {
+      name: 'country',
+      test: /^country$|country of residence/,
+      resolve(hay) {
+        // "Phone Country Code" must not land here; the phone rule owns it.
+        if (/phone|dial|calling code/.test(hay)) return null;
+        return EXPERIENCE_CONTEXT_RE.test(hay) ? 'experience.0.country' : 'identity.country';
+      },
+    },
+    { name: 'preferred_name', test: /preferred (first )?name|nickname|name you go by/, key: 'identity.preferred_name' },
 
     // --- Skills / certs ---
     { name: 'skills_list', test: /(list|summar).{0,20}(your )?(technical )?skills|key skills/, key: 'skills_flat_list' },
@@ -180,6 +273,13 @@
     // strategy ignores this string value and attaches the actual stored
     // bytes instead — see spec §6 "file" + resume-utils.js) ---
     { name: 'resume_upload', test: /r[ée]sum[ée]|^cv$|curriculum vitae|upload.{0,15}resume|attach.{0,15}resume/, key: 'documents.resume_filename' },
+
+    // --- Common ad-hoc screening questions ---
+    { name: 'may_contact_employer', test: /may we contact (this|your|the) (former |previous |current )?employer/, key: '__literal:Yes' },
+    { name: 'willing_travel', test: /(willing|able|available).{0,15}travel|travel (requirement|percentage|up to)/, key: 'logistics.willing_to_travel' },
+    { name: 'employment_type', test: /employment type|full[- ]?time or part[- ]?time|(seeking|looking for).{0,20}(full|part)[- ]?time/, key: 'logistics.employment_type' },
+    { name: 'available_full_time', test: /(available|able).{0,20}(to )?work full[- ]?time/, key: '__literal:Yes' },
+    { name: 'languages_spoken', test: /languages? (spoken|you speak)|language proficiency|fluent in/, key: 'logistics.languages' },
 
     // --- Consents / logistics booleans ---
     { name: 'over_18', test: /(are you )?(at least )?18 years/, key: 'logistics.over_18' },

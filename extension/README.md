@@ -94,13 +94,35 @@ form.
   "CV", or "upload your resume" to this path. If no resume is stored (or the
   page's upload field isn't recognized), it still falls back to flagging
   "attach manually" rather than guessing.
+- **Cross-frame panel merging**: iframe-heavy ATSs (iCIMS, legacy Taleo,
+  SuccessFactors) run the content script in every frame, but only the top
+  frame renders the review panel. Child frames fill their own documents and
+  relay serialized results through the background worker to the top-frame
+  panel; click-to-scroll and "Clear all fills" route back down the same
+  way. (This fixed a live iCIMS run where two overlapping panels appeared
+  and the visible one read 0/0/0.)
+- **Repeatable history blocks**: work-experience and education sections are
+  filled per block — match rules emit index-0 keys and
+  `Matcher.applyRepeatableBlockIndexing` re-points the Nth occurrence of
+  the same field (second "Employer", second "School", …) at
+  `experience[N]`/`education[N]`. A block with no bank entry goes to
+  NEEDS_REVIEW rather than duplicating block 0 (spec §11#4). Context-gated
+  rules distinguish "City" inside an experience block from the home-address
+  "City", and experience/education start/end dates from the
+  "when can you start?" availability question.
+- **Credentials are off-limits**: `type=password` inputs are excluded at
+  the detector level, and Login/Username/Password labels are always flagged
+  NEEDS_REVIEW — account creation belongs to the human.
+- **Ad-hoc questions**: common screening one-offs (may-we-contact-employer,
+  willing to travel, employment type, languages, did-you-graduate) have
+  dedicated rules; anything not covered locally can be key-mapped by the
+  optional Claude Tier-4 fallback, and whatever remains lands in the panel
+  as NEEDS_REVIEW with a "Copy skipped questions" button. Free-form essay
+  prompts ("Why this company?") are deliberately never auto-answered.
 - Live-ATS end-to-end verification (spec §10 Phase 3 acceptance criterion:
-  "one live posting per ATS with zero incorrect fills") requires a live
-  browser session against real postings and hasn't been run here — the
-  adapters are built to the documented DOM quirks (Workday's automation-id
-  scheme and split date spinbuttons, iCIMS's iframe nesting, Taleo's
-  generated-id avoidance, etc.) but should be spot-checked against a live
-  posting per ATS before relying on them for a real application.
+  "one live posting per ATS with zero incorrect fills") should be repeated
+  after any rule change — the iCIMS defects above were only caught by a
+  live run.
 
 ## File map
 

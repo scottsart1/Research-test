@@ -92,6 +92,16 @@
 
     const isOptionField = ['select', 'radio_group', 'checkbox_group'].includes(field.input_type);
     if (!isOptionField) {
+      // YYYY-MM bank dates (experience/education start/end) going into a
+      // plain text input: convert to the MM/YYYY form ATSs conventionally
+      // expect there. Real date inputs are handled by filler.js's date
+      // strategy; option fields (split M/D/Y selects) fall through to
+      // option matching below, where a non-matching "2024-02" correctly
+      // degrades to NEEDS_REVIEW instead of guessing a month.
+      if (/\.(start|end)$/.test(bankKey) && typeof raw === 'string' && /^\d{4}-\d{2}$/.test(raw) && (field.input_type === 'text' || field.input_type === 'textarea')) {
+        const [y, m] = raw.split('-');
+        return { status: 'FILL', value: `${m}/${y}`, reason: 'date_as_month_year' };
+      }
       return { status: 'FILL', value: raw, reason: 'direct' };
     }
 
@@ -138,12 +148,21 @@
   // Tier 2 — regex rules with specificity-based conflict resolution
   // -----------------------------------------------------------------------
 
-  function tier2(field, bank, hay) {
+  function tier2(field, bank, hayLabel, hayFull) {
     const hits = [];
     for (const rule of MatchRules.TIER2_RULES) {
-      const m = hay.match(rule.test);
+      // Anchored rules like /^city$/ must see the bare label — appending a
+      // section heading (iCIMS "Addresses (1)" etc.) would break them. Try
+      // label-only first, then label+context for rules that need the wider
+      // window; rules marked labelOnly never look at the context (their
+      // trigger tokens appear in section headings too). resolve() always
+      // receives the full haystack so context-gated rules (experience-block
+      // fields) can inspect the heading.
+      const m = rule.labelOnly
+        ? hayLabel.match(rule.test)
+        : hayLabel.match(rule.test) || hayFull.match(rule.test);
       if (!m) continue;
-      const key = rule.resolve ? rule.resolve(hay, field, bank) : rule.key;
+      const key = rule.resolve ? rule.resolve(hayFull, field, bank) : rule.key;
       hits.push({ rule, key, matchLen: m[0].length });
     }
     if (hits.length === 0) return null;
@@ -225,6 +244,7 @@
     opts = opts || {};
     const thresholds = Object.assign({}, DEFAULT_THRESHOLDS, opts.thresholds || {});
     const hay = fieldHaystack(field);
+    const hayLabel = Fuzzy.normalize(field.label_text || '');
 
     // Tier 0 — work authorization is a closed subsystem: if the question
     // looks like a work-auth question at all, it is decided here and only
@@ -242,7 +262,7 @@
     const t1 = tier1(field);
     if (t1) return finalize(applyBankKey(t1, bank, field));
 
-    const t2 = tier2(field, bank, hay);
+    const t2 = tier2(field, bank, hayLabel, hay);
     if (t2) {
       if (t2.forceReview) {
         return finalize({ status: 'NEEDS_REVIEW', value: null, bankKey: null, confidence: t2.confidence, tier: 2, category: t2.category, reason: t2.reason });
@@ -317,7 +337,47 @@
     });
   }
 
-  const Matcher = { matchField, resolveApiKey, getByPath, isPlaceholder, resolveValue, WORK_AUTH_DETECT_RE };
+  /**
+   * Repeatable-block indexing (spec §4.4 / §11#4). Match rules always emit
+   * index-0 keys (experience.0.company, education.0.school, ...). Given the
+   * full result list in DOM order, the Nth occurrence of the same
+   * block-field signature is re-pointed at block N and re-resolved, so the
+   * second "Employer" input gets experience[1].company and so on. If the
+   * bank has no entry N, resolution returns NEEDS_REVIEW — never a guess
+   * and never block 0's data duplicated into block 1 (the wrong-repeatable-
+   * block failure in spec §11#4).
+   *
+   * Pure function over [{field, match}] — mutates each `match` in place and
+   * returns the list, so it's unit-testable without a DOM.
+   */
+  function applyRepeatableBlockIndexing(results, bank) {
+    const counters = Object.create(null);
+    for (const r of results) {
+      const key = r.match && r.match.bankKey;
+      if (!key) continue;
+      const m = key.match(/^(experience|education)\.0\.(.+)$/);
+      if (!m) continue;
+      const signature = `${m[1]}.${m[2]}`;
+      const n = counters[signature] || 0;
+      counters[signature] = n + 1;
+      if (n === 0) continue;
+
+      const newKey = `${m[1]}.${n}.${m[2]}`;
+      const resolved = resolveValue(newKey, bank, r.field);
+      r.match.bankKey = newKey;
+      r.match.value = resolved.value;
+      r.match.reason = resolved.reason;
+      if (resolved.status === 'FILL') {
+        // Preserve a low-confidence marker from the original tier match.
+        if (r.match.status !== 'FILL_LOW_CONFIDENCE') r.match.status = 'FILL';
+      } else {
+        r.match.status = resolved.status;
+      }
+    }
+    return results;
+  }
+
+  const Matcher = { matchField, resolveApiKey, getByPath, isPlaceholder, resolveValue, applyRepeatableBlockIndexing, WORK_AUTH_DETECT_RE };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = Matcher;

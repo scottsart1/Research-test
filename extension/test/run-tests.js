@@ -412,6 +412,133 @@ console.log('\n=== Additional coverage: Tier 1/2/3, placeholders, stock answers,
   });
 }
 
+console.log('\n=== Live-run regressions (iCIMS sample): labels with section context ===');
+{
+  test('anchored /^city$/ still matches when a section heading is present (hayLabel fix)', () => {
+    const r = Matcher.matchField(field({ label_text: 'City', context_text: 'Addresses (1)' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Vienna');
+  });
+  test('"Country*" -> identity.country', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Country*', context_text: 'Addresses (1)', options: ['— Make a Selection —', 'United States', 'Canada'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'United States');
+  });
+  test('"Phone Country Code" does NOT hit the country rule', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Phone Country Code', options: ['(+1) United States', '(+44) United Kingdom'] }),
+      defaultBank,
+      {}
+    );
+    assert.notStrictEqual(r.bankKey, 'identity.country');
+  });
+  test('Preferred Name -> Emily', () => {
+    const r = Matcher.matchField(field({ label_text: 'Preferred Name' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Emily');
+  });
+  test('Password field -> NEEDS_REVIEW, never filled', () => {
+    const r = Matcher.matchField(field({ label_text: 'Password (Re-enter)' }), defaultBank, {});
+    assert.strictEqual(r.status, 'NEEDS_REVIEW');
+  });
+  test('Login field -> NEEDS_REVIEW (account creation is the human\'s job)', () => {
+    const r = Matcher.matchField(field({ label_text: 'Login' }), defaultBank, {});
+    assert.strictEqual(r.status, 'NEEDS_REVIEW');
+  });
+}
+
+console.log('\n=== Repeatable experience/education blocks (spec §4.4 / §11#4) ===');
+{
+  const CTX = 'Professional Experience (if relevant, provide the last 10 years)';
+
+  test('Employer -> experience.0.company', () => {
+    const r = Matcher.matchField(field({ label_text: 'Employer', context_text: CTX }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Perry International Inc.');
+  });
+  test('Title inside experience context -> experience.0.title', () => {
+    const r = Matcher.matchField(field({ label_text: 'Title', context_text: CTX }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Data Analyst');
+  });
+  test('City inside experience context -> experience city, not home city', () => {
+    const r = Matcher.matchField(field({ label_text: 'City', context_text: CTX }), defaultBank, {});
+    assert.strictEqual(r.value, 'New York');
+  });
+  test('Description inside experience context -> experience summary', () => {
+    const r = Matcher.matchField(field({ input_type: 'textarea', label_text: 'Description', context_text: CTX }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.ok(String(r.value).includes('statsmodels OLS'));
+  });
+  test('Start Date inside experience context -> MM/YYYY of experience[0].start', () => {
+    const r = Matcher.matchField(field({ label_text: 'Start Date (Month / Day / Year)', context_text: CTX }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, '02/2024');
+  });
+  test('"When can you start?" (no experience context) -> availability answer', () => {
+    const r = Matcher.matchField(field({ label_text: 'When can you start?' }), defaultBank, {});
+    assert.strictEqual(r.value, 'Two weeks from offer');
+  });
+  test('Reason for Leaving -> NEEDS_REVIEW, never fabricated', () => {
+    const r = Matcher.matchField(field({ input_type: 'textarea', label_text: 'Reason for Leaving', context_text: CTX }), defaultBank, {});
+    assert.strictEqual(r.status, 'NEEDS_REVIEW');
+  });
+
+  test('block indexing: 2nd and 3rd Employer fields get experience[1]/[2]', () => {
+    const mk = () => field({ label_text: 'Employer', context_text: CTX });
+    const results = [mk(), mk(), mk(), mk()].map((f) => ({ field: f, match: Matcher.matchField(f, defaultBank, {}) }));
+    Matcher.applyRepeatableBlockIndexing(results, defaultBank);
+    assert.strictEqual(results[0].match.value, 'Perry International Inc.');
+    assert.strictEqual(results[1].match.value, 'Koch Industries');
+    assert.strictEqual(results[2].match.value, 'American University');
+    // 4th block has no bank entry -> NEEDS_REVIEW, never a duplicate/guess.
+    assert.strictEqual(results[3].match.status, 'NEEDS_REVIEW');
+  });
+
+  test('education blocks: School/Degree/Major + 2nd school gets education[1]', () => {
+    const eduCtx = 'Education';
+    const school1 = field({ label_text: 'School', context_text: eduCtx });
+    const school2 = field({ label_text: 'School', context_text: eduCtx });
+    const degreeSel = field({ input_type: 'select', label_text: 'Degree', context_text: eduCtx, options: ["High School", "Bachelor's Degree", "Master's Degree"] });
+    const major = field({ label_text: 'Major', context_text: eduCtx });
+    const results = [school1, degreeSel, major, school2].map((f) => ({ field: f, match: Matcher.matchField(f, defaultBank, {}) }));
+    Matcher.applyRepeatableBlockIndexing(results, defaultBank);
+    assert.strictEqual(results[0].match.value, 'American University');
+    assert.strictEqual(results[1].match.value, "Master's Degree");
+    assert.strictEqual(results[2].match.value, 'Data Science');
+    assert.strictEqual(results[3].match.value, 'Pennsylvania State University');
+  });
+
+  test('"Did you graduate?" -> Yes', () => {
+    const r = Matcher.matchField(field({ input_type: 'radio_group', label_text: 'Did you graduate?', options: ['Yes', 'No'], context_text: 'Education' }), defaultBank, {});
+    assert.strictEqual(r.value, 'Yes');
+  });
+}
+
+console.log('\n=== Ad-hoc screening questions ===');
+{
+  test('May we contact this employer? -> Yes', () => {
+    const r = Matcher.matchField(field({ input_type: 'radio_group', label_text: 'May we contact this employer?', options: ['Yes', 'No'] }), defaultBank, {});
+    assert.strictEqual(r.value, 'Yes');
+  });
+  test('Willing to travel -> Yes', () => {
+    const r = Matcher.matchField(field({ input_type: 'radio_group', label_text: 'Are you willing to travel?', options: ['Yes', 'No'] }), defaultBank, {});
+    assert.strictEqual(r.value, 'Yes');
+  });
+  test('Employment type select -> Full-time', () => {
+    const r = Matcher.matchField(field({ input_type: 'select', label_text: 'Employment type', options: ['Full-time', 'Part-time', 'Temporary'] }), defaultBank, {});
+    assert.strictEqual(r.value, 'Full-time');
+  });
+  test('Languages spoken -> English', () => {
+    const r = Matcher.matchField(field({ label_text: 'Languages spoken' }), defaultBank, {});
+    assert.strictEqual(r.value, 'English');
+  });
+}
+
 console.log('\n=== Resume attachment (spec §6 "file" + resume-utils.js) ===');
 {
   test('base64 round-trip preserves bytes exactly, including the bundled PDF', () => {

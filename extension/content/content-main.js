@@ -2,20 +2,35 @@
  * content-main.js — orchestrator (spec §2 "Flow").
  *
  * popup "Fill" (or Alt+Shift+F) -> detector collects FieldDescriptor[] ->
- * matcher (Tier 1-3 local, Tier 4 batched API) -> filler writes with proper
- * events -> verification pass -> review panel renders ✅/⚠️/⛔.
+ * matcher (Tier 1-3 local, Tier 4 batched API) -> repeatable-block indexing
+ * -> filler writes with proper events -> verification pass -> review panel.
+ *
+ * FRAME MODEL (spec §7 iCIMS/Greenhouse "merge to top-frame panel"):
+ * content scripts run in every frame (all_frames: true). Only the TOP frame
+ * ever renders the review panel. Child frames fill their own documents,
+ * then ship plain serialized records up through the background worker
+ * (FRAME_RECORDS -> MERGE_RECORDS), which the top frame merges into the
+ * single panel. Click-to-scroll and "Clear all fills" are routed back down
+ * to the owning frame the same way (PULSE_FIELD -> PULSE_LOCAL,
+ * CLEAR_FILLS broadcast). Without this, iframe-heavy ATSs (iCIMS, legacy
+ * Taleo, SuccessFactors) show one empty panel in the top frame and a
+ * second squeezed panel inside the iframe — the exact failure observed on
+ * a live iCIMS run.
  *
  * This file never calls a submit control and never auto-advances a
- * multi-step form (spec §11#10) — it only fills the fields visible on the
- * current page and offers (never forces) a refill when new fields appear.
+ * multi-step form (spec §11#10).
  */
 (function () {
   'use strict';
 
+  const IS_TOP = window === window.top;
+
   let hasWaitedForPrefill = false;
   let stopFieldWatcher = null;
   let stopRouteWatcher = null;
-  let lastFillSnapshot = []; // for "Clear all fills"
+  let lastFillSnapshot = []; // for "Clear all fills" (per frame)
+  let localFieldsById = new Map(); // field_id -> field (per frame, for pulse)
+  let mergedRecords = new Map(); // top frame only: `${frameKey}:${field_id}` -> record
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -55,16 +70,22 @@
       'identity.phone_formatted', 'identity.address_line1', 'identity.city', 'identity.state',
       'identity.zip', 'identity.country', 'identity.linkedin', 'identity.portfolio', 'identity.github',
       'identity.how_heard', 'identity.preferred_name', 'identity.pronouns',
-      'education.0.school', 'education.0.degree', 'education.0.field', 'education.0.gpa', 'education.0.end',
+      'education.0.school', 'education.0.degree', 'education.0.degree_level', 'education.0.field',
+      'education.0.gpa', 'education.0.start', 'education.0.end',
+      'experience.0.company', 'experience.0.title', 'experience.0.summary',
+      'experience.0.location_city', 'experience.0.location_state', 'experience.0.country',
+      'experience.0.start', 'experience.0.end',
       'highest_education', 'total_professional_years', 'skills_flat_list', 'certifications',
       'clearance.has_clearance', 'clearance.clearance_level', 'clearance.willing_to_obtain', 'clearance.held_clearance_past',
       'federal.current_federal_employee', 'federal.former_federal_employee', 'federal.special_hiring_authority',
       'compensation.desired_salary_annual', 'compensation.salary_answer_text',
       'logistics.available_start', 'logistics.willing_to_relocate', 'logistics.remote_hybrid_onsite',
+      'logistics.willing_to_travel', 'logistics.employment_type', 'logistics.languages',
       'logistics.over_18', 'logistics.worked_here_before', 'logistics.relatives_at_company',
       'logistics.non_compete', 'logistics.background_check_consent', 'logistics.drug_test_consent',
       'logistics.criminal_record', 'logistics.military_veteran_service',
       'eeo.gender', 'eeo.race_ethnicity', 'eeo.hispanic_latino', 'eeo.veteran_status', 'eeo.disability_status',
+      'documents.resume_filename',
     ];
   }
 
@@ -93,6 +114,19 @@
     });
   }
 
+  /**
+   * Combine the match decision with what the filler actually did into a
+   * single panel status. A low-confidence match that filled successfully
+   * must stay visible as a warning, not get promoted to a clean FILLED.
+   */
+  function combinedStatus(matchResult, fillOutcome) {
+    if (!fillOutcome) return matchResult.status;
+    if (fillOutcome.outcome === 'FILLED' && matchResult.status === 'FILL_LOW_CONFIDENCE') {
+      return 'FILLED_LOW_CONFIDENCE';
+    }
+    return fillOutcome.outcome;
+  }
+
   function buildOutcomeRecord(field, matchResult, fillOutcome) {
     return {
       field_id: field.id,
@@ -100,25 +134,33 @@
       category: matchResult.category,
       value: matchResult.value,
       lockIcon: !!matchResult.lockIcon,
-      status: fillOutcome ? fillOutcome.outcome : matchResult.status,
-      note: fillOutcome && fillOutcome.note,
-      __field: field,
+      status: combinedStatus(matchResult, fillOutcome),
+      note: (fillOutcome && fillOutcome.note) || matchResult.reason || undefined,
     };
+  }
+
+  function frameToast(message) {
+    // Only the top frame owns UI. Child frames route toasts upward.
+    if (IS_TOP) {
+      window.ReviewPanel.showToast(message);
+    } else {
+      chrome.runtime.sendMessage({ type: 'FRAME_TOAST', message });
+    }
   }
 
   async function runFillPass(adapter, opts) {
     opts = opts || {};
     const { bank, settings } = await loadSettings();
     if (!bank) {
-      window.ReviewPanel.showToast('No answer bank configured — open the extension options page first.');
+      frameToast('No answer bank configured — open the extension options page first.');
       return;
     }
-    if (!settings.immigrationStatus) {
-      window.ReviewPanel.showToast('No work-authorization preset selected in options — those questions will be flagged for review.');
+    if (!settings.immigrationStatus && IS_TOP) {
+      frameToast('No work-authorization preset selected in options — those questions will be flagged for review.');
     }
 
     if (adapter.isOutOfScope && adapter.isOutOfScope()) {
-      window.ReviewPanel.showToast('This page (account creation) is out of scope — nothing was filled.');
+      frameToast('This page (account creation) is out of scope — nothing was filled.');
       return;
     }
 
@@ -135,6 +177,8 @@
       fields = fields.map(adapter.quirks.normalizeField);
     }
 
+    localFieldsById = new Map(fields.map((f) => [f.id, f]));
+
     const results = fields.map((field) => ({
       field,
       match: window.Matcher.matchField(field, bank, {
@@ -142,6 +186,10 @@
         thresholds: settings.thresholds,
       }),
     }));
+
+    // Repeatable blocks: 2nd/3rd occurrence of the same experience/education
+    // field gets re-pointed at experience[1]/[2] etc. (spec §4.4, §11#4).
+    window.Matcher.applyRepeatableBlockIndexing(results, bank);
 
     const unmatched = results.filter((r) => r.match.status === 'UNMATCHED' && r.match.category !== 'work_auth');
     const tier4Results = await resolveTier4(unmatched.map((r) => r.field), bank);
@@ -180,22 +228,65 @@
       });
     }
 
-    renderPanel(records);
+    publishRecords(records);
     persistState(records);
   }
 
-  function renderPanel(records) {
-    window.ReviewPanel.render(records, {
+  // ---------------------------------------------------------------------
+  // Record publication: child frames send up, top frame merges + renders
+  // ---------------------------------------------------------------------
+
+  function publishRecords(records) {
+    if (IS_TOP) {
+      mergeRecords('local', records);
+    } else {
+      chrome.runtime.sendMessage({ type: 'FRAME_RECORDS', records });
+    }
+  }
+
+  function mergeRecords(frameKey, records) {
+    for (const r of records) {
+      mergedRecords.set(`${frameKey}:${r.field_id}`, Object.assign({}, r, { __frameKey: frameKey }));
+    }
+    renderPanel();
+  }
+
+  function renderPanel() {
+    const all = [...mergedRecords.values()];
+    window.ReviewPanel.render(all, {
       onItemClick: (record) => {
-        const el = record.__field && record.__field.__elements && record.__field.__elements[0];
-        window.ReviewPanel.pulseElement(el);
+        if (record.__frameKey === 'local') {
+          const field = localFieldsById.get(record.field_id);
+          window.ReviewPanel.pulseElement(field && field.__elements && field.__elements[0]);
+        } else {
+          chrome.runtime.sendMessage({ type: 'PULSE_FIELD', frameId: record.__frameKey, field_id: record.field_id });
+        }
       },
       onClearAll: () => {
         restoreSnapshot();
-        renderPanel([]);
+        chrome.runtime.sendMessage({ type: 'CLEAR_FILLS_BROADCAST' });
+        mergedRecords = new Map();
+        renderPanel();
       },
       onCopySkipped: () => {},
     });
+  }
+
+  function pulseLocalField(fieldId) {
+    const field = localFieldsById.get(fieldId);
+    const el = field && field.__elements && field.__elements[0];
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Inline-style highlight: the panel's shadow-DOM keyframes can't reach
+    // page elements (and don't exist at all in child frames).
+    const prevOutline = el.style.outline;
+    const prevOffset = el.style.outlineOffset;
+    el.style.outline = '3px solid #4f46e5';
+    el.style.outlineOffset = '2px';
+    setTimeout(() => {
+      el.style.outline = prevOutline;
+      el.style.outlineOffset = prevOffset;
+    }, 1400);
   }
 
   function restoreSnapshot() {
@@ -208,6 +299,10 @@
         });
       } else if (field.input_type === 'checkbox') {
         if (el.checked && !originalValue) el.click();
+      } else if (field.input_type === 'file') {
+        try {
+          el.value = '';
+        } catch (e) { /* some browsers disallow programmatic clear; harmless */ }
       } else if (window.Filler) {
         window.Filler.setNativeValue(el, originalValue || '');
       }
@@ -230,13 +325,19 @@
   function offerRefillOnNewFields(adapter) {
     if (stopFieldWatcher) stopFieldWatcher();
     stopFieldWatcher = window.Observer.startFieldWatcher(() => {
-      window.ReviewPanel.showToast('New fields detected on this page.', () => runFillPass(adapter, { force: false }));
+      if (IS_TOP) {
+        window.ReviewPanel.showToast('New fields detected on this page.', () => runFillPass(adapter, { force: false }));
+      } else {
+        chrome.runtime.sendMessage({ type: 'FRAME_NEW_FIELDS' });
+      }
     }, 600);
 
-    if (stopRouteWatcher) stopRouteWatcher();
-    stopRouteWatcher = window.Observer.startRouteWatcher(() => {
-      window.ReviewPanel.showToast('New page detected — fill this page?', () => runFillPass(adapter, { force: false }));
-    }, 700);
+    if (IS_TOP) {
+      if (stopRouteWatcher) stopRouteWatcher();
+      stopRouteWatcher = window.Observer.startRouteWatcher(() => {
+        window.ReviewPanel.showToast('New page detected — fill this page?', () => runFillPass(adapter, { force: false }));
+      }, 700);
+    }
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -250,6 +351,31 @@
     }
     if (message.type === 'GET_FIELD_COUNT') {
       sendResponse({ count: window.Detector.detectFields(document).length });
+      return;
+    }
+    if (message.type === 'PULSE_LOCAL') {
+      pulseLocalField(message.field_id);
+      return;
+    }
+    if (message.type === 'CLEAR_FILLS') {
+      restoreSnapshot();
+      return;
+    }
+    if (!IS_TOP) return;
+
+    // --- Top-frame-only handlers (relayed by the background worker) ---
+    if (message.type === 'MERGE_RECORDS') {
+      mergeRecords(String(message.frameId), message.records || []);
+      return;
+    }
+    if (message.type === 'SHOW_TOAST') {
+      window.ReviewPanel.showToast(message.message);
+      return;
+    }
+    if (message.type === 'FRAME_NEW_FIELDS_TOAST') {
+      window.ReviewPanel.showToast('New fields detected in an embedded form — fill them?', () => {
+        chrome.runtime.sendMessage({ type: 'FILL_FRAME', frameId: message.frameId });
+      });
     }
   });
 })();

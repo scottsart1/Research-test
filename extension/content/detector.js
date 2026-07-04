@@ -20,8 +20,11 @@
     return 'fd_' + String(fieldCounter).padStart(4, '0');
   }
 
+  // type=password excluded outright: credentials are never autofill
+  // territory for this extension (iCIMS/Workday account-creation sections),
+  // and even reading their current_value would be inappropriate.
   const FILLABLE_SELECTOR = [
-    'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image])',
+    'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]):not([type=password])',
     'select',
     'textarea',
     '[contenteditable=""]',

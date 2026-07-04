@@ -84,7 +84,8 @@
 
     const filled = outcomes.filter((o) => o.status === 'FILLED').length;
     const warnings = outcomes.filter((o) => o.status === 'FILLED_LOW_CONFIDENCE' || o.status === 'FILLED_UNVERIFIED').length;
-    const review = outcomes.filter((o) => o.status === 'NEEDS_REVIEW' || o.status === 'UNMATCHED' || o.status === 'FAILED').length;
+    const review = outcomes.filter((o) => o.status === 'NEEDS_REVIEW' || o.status === 'UNMATCHED' || o.status === 'FAILED' || o.status === 'SKIPPED_UNSUPPORTED_TYPE').length;
+    const prefilled = outcomes.filter((o) => o.status === 'SKIPPED_PREFILLED').length;
     const lockItems = outcomes.filter((o) => o.lockIcon);
     const clearanceFlag = outcomes.some((o) => o.category === 'clearance' && o.clearanceRequiredNotice);
 
@@ -100,8 +101,16 @@
         <span>✅ ${filled} filled</span>
         <span>⚠️ ${warnings} low-confidence</span>
         <span>⛔ ${review} need review</span>
+        ${prefilled > 0 ? `<span>⏭️ ${prefilled} already filled</span>` : ''}
       </div>`;
     panel.appendChild(header);
+
+    if (outcomes.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'list';
+      empty.innerHTML = '<div class="item"><div>No fillable fields detected on this page yet. If the form lives in an embedded frame, results will appear here as each frame reports in.</div></div>';
+      panel.appendChild(empty);
+    }
 
     if (clearanceFlag) {
       const notice = document.createElement('div');

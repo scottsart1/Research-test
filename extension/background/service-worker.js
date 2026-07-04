@@ -149,6 +149,22 @@ async function handlePersistPanelState(message, sender) {
   await chrome.storage.session.set({ [key]: { pages, updatedAt: Date.now() } });
 }
 
+// ---------------------------------------------------------------------
+// Cross-frame relay: iframe-heavy ATSs (iCIMS, legacy Taleo,
+// SuccessFactors) run the content script in every frame, but only the top
+// frame renders the review panel. Child-frame results, pulse requests, and
+// clear-fills all route through here because sibling frames cannot message
+// each other directly. sender.frameId identifies the child; frameId 0 is
+// always the top frame.
+// ---------------------------------------------------------------------
+
+function relayToFrame(tabId, frameId, message) {
+  chrome.tabs.sendMessage(tabId, message, { frameId }, () => {
+    // Swallow "no receiving end" — the frame may have navigated away.
+    void chrome.runtime.lastError;
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'RESOLVE_TIER4') {
     handleResolveTier4(message).then(sendResponse);
@@ -164,5 +180,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse(data[`panelState:${tabId}`] || { pages: {} });
     });
     return true;
+  }
+
+  const tabId = sender.tab && sender.tab.id;
+  if (tabId == null) return;
+
+  if (message.type === 'FRAME_RECORDS') {
+    relayToFrame(tabId, 0, { type: 'MERGE_RECORDS', frameId: sender.frameId, records: message.records });
+    return;
+  }
+  if (message.type === 'FRAME_TOAST') {
+    relayToFrame(tabId, 0, { type: 'SHOW_TOAST', message: message.message });
+    return;
+  }
+  if (message.type === 'FRAME_NEW_FIELDS') {
+    relayToFrame(tabId, 0, { type: 'FRAME_NEW_FIELDS_TOAST', frameId: sender.frameId });
+    return;
+  }
+  if (message.type === 'PULSE_FIELD') {
+    relayToFrame(tabId, Number(message.frameId), { type: 'PULSE_LOCAL', field_id: message.field_id });
+    return;
+  }
+  if (message.type === 'FILL_FRAME') {
+    relayToFrame(tabId, Number(message.frameId), { type: 'AUTOFILL_START' });
+    return;
+  }
+  if (message.type === 'CLEAR_FILLS_BROADCAST') {
+    // No frameId option -> delivered to every frame in the tab.
+    chrome.tabs.sendMessage(tabId, { type: 'CLEAR_FILLS' }, () => {
+      void chrome.runtime.lastError;
+    });
   }
 });
