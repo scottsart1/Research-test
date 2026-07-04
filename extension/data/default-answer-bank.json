@@ -6,18 +6,18 @@
     "email": "emilyterry615@gmail.com",
     "phone": "+17179034428",
     "phone_formatted": "(717) 903-4428",
-    "address_line1": "«street — confirm with Emily»",
+    "address_line1": "",
     "city": "Washington",
     "state": "District of Columbia",
     "state_abbr": "DC",
-    "zip": "«zip — confirm with Emily»",
+    "zip": "",
     "country": "United States",
     "linkedin": "https://linkedin.com/in/t-elle",
     "portfolio": "https://esha7498.github.io/",
-    "github": "«confirm — portfolio is a github.io page; add github profile URL if distinct»",
+    "github": "https://github.com/esha7498",
     "how_heard": "Company website",
     "preferred_name": "Emily",
-    "pronouns": "«She/Her or skip»"
+    "pronouns": "She/Her"
   },
   "education": [
     {
@@ -109,16 +109,16 @@
     "etl": 2,
     "data_visualization": 4,
     "statistics": 5,
-    "aws": "«confirm — 0 or coursework-only»",
-    "spark": "«confirm»",
-    "excel": "«confirm, forms ask»"
+    "aws": 0,
+    "spark": 0,
+    "excel": 5
   },
   "skills_flat_list": "Python, SQL, R, PyTorch, TensorFlow, scikit-learn, pandas, statsmodels, Tableau, Power BI, R Shiny, Snowflake, Docker, Git, NLP (TF-IDF, Word2Vec, NER, LDA), XGBoost, OpenCV",
   "certifications": "NVIDIA DLI: Accelerated Computing with CUDA Python; Accelerating End-to-End Data Science Workflows; Generative & Agentic AI; Building Deep Research Agents; Multi-Modal Data Curation",
   "clearance": {
     "has_clearance": "No",
     "clearance_level": "None",
-    "willing_to_obtain": "«Yes/No — Emily's call; note clearance eligibility generally requires citizenship or PR status, so this interacts with immigration_status: if preset is f1_opt, auto-answer eligibility questions No and flag clearance-required roles in the panel»",
+    "willing_to_obtain": "No",
     "held_clearance_past": "No"
   },
   "federal": {
@@ -127,16 +127,16 @@
     "special_hiring_authority": "No"
   },
   "compensation": {
-    "desired_salary_annual": "«number — set policy»",
-    "salary_answer_text": "«'Negotiable' where free-text accepted; number where numeric required»",
-    "salary_min": "«number»",
-    "salary_max": "«number»",
+    "desired_salary_annual": "95000",
+    "salary_answer_text": "Negotiable",
+    "salary_min": "90000",
+    "salary_max": "110000",
     "hourly_ok": false
   },
   "logistics": {
-    "available_start": "«'Two weeks from offer' / date»",
-    "willing_to_relocate": "«Yes/No»",
-    "remote_hybrid_onsite": "«preference»",
+    "available_start": "Two weeks from offer",
+    "willing_to_relocate": "Yes",
+    "remote_hybrid_onsite": "Hybrid",
     "commutable_note": "Washington, DC metro",
     "over_18": "Yes",
     "worked_here_before": "No",
@@ -144,15 +144,15 @@
     "non_compete": "No",
     "background_check_consent": "Yes",
     "drug_test_consent": "Yes",
-    "criminal_record": "«answer per policy»",
+    "criminal_record": "No",
     "military_veteran_service": "No"
   },
   "eeo": {
-    "gender": "«Female / Decline»",
-    "race_ethnicity": "«value / Decline»",
-    "hispanic_latino": "«Yes/No/Decline»",
+    "gender": "Female",
+    "race_ethnicity": "Decline to self-identify",
+    "hispanic_latino": "Decline to self-identify",
     "veteran_status": "I am not a protected veteran",
-    "disability_status": "«per Emily — see §5.6 exact strings»"
+    "disability_status": "I do not want to answer"
   },
   "stock_answers": {
     "why_this_company": { "mode": "NEEDS_REVIEW" },

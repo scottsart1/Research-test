@@ -328,9 +328,10 @@ console.log('\n=== Phase 2 required test 8: EEO exact strings + decline synonym 
     assert.strictEqual(EeoStrings.isDeclineOption('Male'), false);
   });
   test('placeholder EEO bank values (gender/race/disability) never fill, always NEEDS_REVIEW', () => {
+    const bank = freshBank({ eeo: Object.assign({}, defaultBank.eeo, { gender: '«Female / Decline»' }) });
     const r = Matcher.matchField(
       field({ input_type: 'select', label_text: 'Gender', options: ['Male', 'Female', 'Decline to self-identify'] }),
-      defaultBank,
+      bank,
       {}
     );
     assert.strictEqual(r.status, 'NEEDS_REVIEW');
@@ -344,9 +345,15 @@ console.log('\n=== Additional coverage: Tier 1/2/3, placeholders, stock answers,
     assert.strictEqual(r.tier, 1);
     assert.strictEqual(r.value, 'Emily');
   });
-  test('Tier 2 regex: "desired salary" routes to placeholder -> NEEDS_REVIEW (never fabricate a number)', () => {
-    const r = Matcher.matchField(field({ label_text: 'Desired salary' }), defaultBank, {});
+  test('Tier 2 regex: "desired salary" routes to a placeholder value -> NEEDS_REVIEW (never fabricate a number)', () => {
+    const bank = freshBank({ compensation: Object.assign({}, defaultBank.compensation, { desired_salary_annual: '«number — set policy»' }) });
+    const r = Matcher.matchField(field({ label_text: 'Desired salary' }), bank, {});
     assert.strictEqual(r.status, 'NEEDS_REVIEW');
+  });
+  test('Tier 2 regex: "desired salary" fills once a real bank value is set', () => {
+    const r = Matcher.matchField(field({ label_text: 'Desired salary' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, defaultBank.compensation.desired_salary_annual);
   });
   test('Tier 3 fuzzy: "where did you hear about this position" -> identity.how_heard', () => {
     const r = Matcher.matchField(field({ label_text: 'Where did you hear about this position?' }), defaultBank, {});
@@ -376,8 +383,13 @@ console.log('\n=== Additional coverage: Tier 1/2/3, placeholders, stock answers,
     assert.strictEqual(r.status, 'NEEDS_REVIEW');
   });
   test('clearance willingness placeholder never fills', () => {
-    const r = Matcher.matchField(field({ label_text: 'Are you willing to obtain a security clearance?' }), defaultBank, {});
+    const bank = freshBank({ clearance: Object.assign({}, defaultBank.clearance, { willing_to_obtain: '«Yes/No — Emily\'s call»' }) });
+    const r = Matcher.matchField(field({ label_text: 'Are you willing to obtain a security clearance?' }), bank, {});
     assert.strictEqual(r.status, 'NEEDS_REVIEW');
+  });
+  test('clearance willingness fills once a real bank value is set', () => {
+    const r = Matcher.matchField(field({ label_text: 'Are you willing to obtain a security clearance?' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
   });
   test('conflicting Tier 2 categories within margin -> NEEDS_REVIEW', () => {
     const bank = freshBank();
