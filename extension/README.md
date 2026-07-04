@@ -23,9 +23,17 @@ configure, and test what was built.
    - Review any remaining `«placeholder»` values (EEO choices are the main
      ones left — see `data/default-answer-bank.json`). Everything else
      (address, salary, YoE for niche skills, etc.) already has a real value.
-   - Optionally enable the Claude API fallback and paste an Anthropic API
-     key (only used for question→key *mapping*, never for generating
-     answers, and never for work-authorization questions).
+   - Optionally enable **Claude AI answering** and paste an Anthropic API
+     key. When on, every question local matching can't confidently answer
+     is sent to Claude to understand what it's really asking; Claude can
+     map it to an existing answer, pick the correct dropdown option, or —
+     with the drafting toggle on — write a first-person answer to
+     qualitative questions ("Why this role?", "Reason for leaving")
+     grounded in Emily's profile and the job posting. Pick Haiku 4.5
+     (fast/cheap) or Sonnet 5 (better drafting). AI never touches work
+     authorization, EEO demographics, salary figures, clearance, criminal
+     history, or logins/passwords, and every AI-drafted answer is pinned
+     in the review panel with a 🤖 marker for reading before submit.
 
 ## Use it
 
@@ -76,11 +84,16 @@ form.
   §7 (Workday, Greenhouse, iCIMS, Taleo/Oracle Recruiting, Lever, Ashby,
   SmartRecruiters, plus the thin Tier 3 hint-adapters and the generic
   fallback).
-- **Phase 4**: Claude Haiku Tier-4 fallback is wired end-to-end
-  (background/service-worker.js batches unmatched fields, enforces the
-  work-authorization exclusion independently as defense in depth, and never
-  lets the API return a value — only a key, which is then run back through
-  the same option-matching/placeholder-guard pipeline as local tiers).
+- **Phase 4 / AI answering** (extended beyond the original spec at the
+  owner's direction): background/service-worker.js batches every field the
+  local tiers left UNMATCHED or NEEDS_REVIEW (minus locked attestations)
+  into one Claude call with the job page's title/excerpt and a whitelisted
+  candidate profile. The model returns one action per field — `map` to a
+  bank key, `option` (validated locally against the field's real options),
+  `draft` (free-text only, forbidden-category-filtered, length-capped,
+  flagged 🤖 in the panel), or `skip`. The work-authorization exclusion is
+  enforced independently in the worker and again in the content-side
+  resolver as defense in depth.
   Keyboard shortcut, snapshot/restore ("Clear all fills"), and the Tier 3
   hint-adapters are implemented. The resume-attachment `DataTransfer`
   injection (spec §6's Phase 4 "stretch" item) is implemented too, now that

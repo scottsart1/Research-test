@@ -94,6 +94,8 @@
     placeholderCount: document.getElementById('placeholder-count'),
     presetRow: document.getElementById('preset-row'),
     apiEnabled: document.getElementById('api-enabled'),
+    aiDraftEnabled: document.getElementById('ai-draft-enabled'),
+    apiModel: document.getElementById('api-model'),
     apiKey: document.getElementById('api-key'),
     fuzzyFill: document.getElementById('fuzzy-fill'),
     fuzzyFillVal: document.getElementById('fuzzy-fill-val'),
@@ -195,6 +197,8 @@
     const checked = els.presetRow.querySelector(`input[value="${settings.immigrationStatus}"]`);
     if (checked) checked.checked = true;
     els.apiEnabled.checked = !!settings.apiEnabled;
+    els.aiDraftEnabled.checked = settings.aiDraftEnabled !== false; // default on
+    els.apiModel.value = settings.apiModel || 'claude-haiku-4-5-20251001';
     els.apiKey.value = settings.apiKey || '';
     els.fuzzyFill.value = settings.thresholds.fuzzyFill;
     els.fuzzyFillVal.textContent = settings.thresholds.fuzzyFill;
@@ -275,6 +279,8 @@
     settings.immigrationStatus = preset ? preset.value : '';
     bank.immigration_status = settings.immigrationStatus;
     settings.apiEnabled = els.apiEnabled.checked;
+    settings.aiDraftEnabled = els.aiDraftEnabled.checked;
+    settings.apiModel = els.apiModel.value;
     settings.apiKey = els.apiKey.value;
     settings.thresholds = { fuzzyFill: parseFloat(els.fuzzyFill.value), fuzzyWarn: parseFloat(els.fuzzyWarn.value) };
     settings.atsToggles = {};

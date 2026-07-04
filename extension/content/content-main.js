@@ -89,19 +89,39 @@
     ];
   }
 
-  async function resolveTier4(unmatchedFields, bank) {
-    if (unmatchedFields.length === 0) return {};
+  // Fields the AI must never see, even for mapping: locked work-auth
+  // records, EEO demographics, and anything the local rules flagged as
+  // credentials or a human-only attestation.
+  const AI_EXCLUDED_REASONS = new Set(['password', 'login_username', 'public_trust']);
+
+  function aiEligible(r) {
+    if (r.match.lockIcon || r.match.category === 'work_auth' || r.match.category === 'eeo') return false;
+    if (AI_EXCLUDED_REASONS.has(r.match.reason)) return false;
+    return r.match.status === 'UNMATCHED' || r.match.status === 'NEEDS_REVIEW';
+  }
+
+  function collectJobContext() {
+    let excerpt = '';
+    try {
+      excerpt = (document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 2500);
+    } catch (e) { /* detached body etc. */ }
+    return { page_title: document.title || '', page_excerpt: excerpt };
+  }
+
+  async function resolveTier4(candidateFields) {
+    if (candidateFields.length === 0) return {};
     const { settings } = await loadSettings();
     if (!settings.apiEnabled) return {};
-    const payload = unmatchedFields.map((f) => ({
+    const payload = candidateFields.map((f) => ({
       field_id: f.id,
       label_text: f.label_text,
       context_text: f.context_text,
+      input_type: f.input_type,
       options: f.options,
     }));
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { type: 'RESOLVE_TIER4', fields: payload, catalog: bankKeyCatalog() },
+        { type: 'RESOLVE_TIER4', fields: payload, catalog: bankKeyCatalog(), job_context: collectJobContext() },
         (response) => {
           if (chrome.runtime.lastError || !response || !response.results) return resolve({});
           const byId = {};
@@ -124,6 +144,9 @@
     if (fillOutcome.outcome === 'FILLED' && matchResult.status === 'FILL_LOW_CONFIDENCE') {
       return 'FILLED_LOW_CONFIDENCE';
     }
+    if (fillOutcome.outcome === 'FILLED' && matchResult.status === 'FILL_AI_DRAFT') {
+      return 'FILLED_AI_DRAFT';
+    }
     return fillOutcome.outcome;
   }
 
@@ -134,6 +157,7 @@
       category: matchResult.category,
       value: matchResult.value,
       lockIcon: !!matchResult.lockIcon,
+      aiGenerated: !!matchResult.aiGenerated,
       status: combinedStatus(matchResult, fillOutcome),
       note: (fillOutcome && fillOutcome.note) || matchResult.reason || undefined,
     };
@@ -191,16 +215,20 @@
     // field gets re-pointed at experience[1]/[2] etc. (spec §4.4, §11#4).
     window.Matcher.applyRepeatableBlockIndexing(results, bank);
 
-    const unmatched = results.filter((r) => r.match.status === 'UNMATCHED' && r.match.category !== 'work_auth');
-    const tier4Results = await resolveTier4(unmatched.map((r) => r.field), bank);
-    for (const r of results) {
-      const apiHit = tier4Results[r.field.id];
-      if (r.match.status === 'UNMATCHED' && apiHit) {
-        r.match = window.Matcher.resolveApiKey(r.field, bank, apiHit.answer_key, apiHit.confidence);
-      }
+    // AI pass: everything local matching couldn't confidently answer —
+    // unmatched AND needs-review — goes to the model for semantic
+    // understanding (map to a known answer, pick the right option, or draft
+    // a grounded qualitative answer). Locked/attestation fields never go.
+    const aiCandidates = results.filter(aiEligible);
+    const tier4Results = await resolveTier4(aiCandidates.map((r) => r.field));
+    for (const r of aiCandidates) {
+      const decision = tier4Results[r.field.id];
+      if (!decision) continue;
+      const next = window.Matcher.resolveApiAction(r.field, bank, decision);
+      if (next) r.match = next;
     }
 
-    const toFill = results.filter((r) => r.match.status === 'FILL' || r.match.status === 'FILL_LOW_CONFIDENCE');
+    const toFill = results.filter((r) => ['FILL', 'FILL_LOW_CONFIDENCE', 'FILL_AI_DRAFT'].includes(r.match.status));
     const snapshot = toFill.map((r) => ({ field: r.field, originalValue: r.field.current_value }));
 
     const fillEntries = toFill.map((r) => ({ field: r.field, value: r.match.value }));

@@ -539,6 +539,59 @@ console.log('\n=== Ad-hoc screening questions ===');
   });
 }
 
+console.log('\n=== AI semantic answering (resolveApiAction) ===');
+{
+  test('action "draft" on a textarea produces a flagged AI draft', () => {
+    const f = field({ input_type: 'textarea', label_text: 'Why do you want to work at this company?' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'My data science background at Perry International and Koch Industries maps directly onto this role.', confidence: 0.85 });
+    assert.strictEqual(r.status, 'FILL_AI_DRAFT');
+    assert.strictEqual(r.aiGenerated, true);
+    assert.ok(r.value.includes('Perry International'));
+  });
+  test('action "draft" on a select is rejected (drafts are free-text only)', () => {
+    const f = field({ input_type: 'select', label_text: 'Team size preference', options: ['Small', 'Large'] });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'Small', confidence: 0.9 });
+    assert.strictEqual(r, null);
+  });
+  test('action "draft" on a salary question is rejected (forbidden category)', () => {
+    const f = field({ input_type: 'text', label_text: 'What are your salary expectations?' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'Around $95,000', confidence: 0.9 });
+    assert.strictEqual(r, null);
+  });
+  test('action "draft" on a work-auth question -> locked NEEDS_REVIEW', () => {
+    const f = field({ input_type: 'text', label_text: 'Describe your visa sponsorship needs' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'None', confidence: 0.95 });
+    assert.strictEqual(r.status, 'NEEDS_REVIEW');
+    assert.strictEqual(r.lockIcon, true);
+  });
+  test('action "draft" below confidence 0.6 is rejected', () => {
+    const f = field({ input_type: 'textarea', label_text: 'Tell us about a project you are proud of' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'Something.', confidence: 0.4 });
+    assert.strictEqual(r, null);
+  });
+  test('action "option" must validate against the field\'s real options', () => {
+    const f = field({ input_type: 'select', label_text: 'Which shift can you work?', options: ['Day shift', 'Night shift', 'Either'] });
+    const good = Matcher.resolveApiAction(f, defaultBank, { action: 'option', option: 'Day shift', confidence: 0.9 });
+    assert.strictEqual(good.status, 'FILL');
+    assert.strictEqual(good.value, 'Day shift');
+    assert.strictEqual(good.aiGenerated, true);
+    const bad = Matcher.resolveApiAction(f, defaultBank, { action: 'option', option: 'Swing shift', confidence: 0.9 });
+    assert.strictEqual(bad, null);
+  });
+  test('action "map" still routes through the key pipeline with all guards', () => {
+    const f = field({ input_type: 'text', label_text: 'Your top tools?' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'map', answer_key: 'skills_flat_list', confidence: 0.9 });
+    assert.strictEqual(r.status, 'FILL');
+    assert.ok(String(r.value).includes('Python'));
+  });
+  test('action "skip" and unknown actions -> null (local record kept)', () => {
+    const f = field({ input_type: 'text', label_text: 'Anything else?' });
+    assert.strictEqual(Matcher.resolveApiAction(f, defaultBank, { action: 'skip', confidence: 1 }), null);
+    assert.strictEqual(Matcher.resolveApiAction(f, defaultBank, { action: 'hack', confidence: 1 }), null);
+    assert.strictEqual(Matcher.resolveApiAction(f, defaultBank, null), null);
+  });
+}
+
 console.log('\n=== Resume attachment (spec §6 "file" + resume-utils.js) ===');
 {
   test('base64 round-trip preserves bytes exactly, including the bundled PDF', () => {

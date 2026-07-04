@@ -337,6 +337,68 @@
     });
   }
 
+  // Questions the AI may map to existing answers but must never *draft*
+  // prose for: attestations, demographics, figures, and credentials.
+  const DRAFT_FORBIDDEN_RE =
+    /salary|compensation|pay (rate|range)|clearance|citizen|visa|sponsor|immigration|gender|race|ethnicit|veteran|disabilit|criminal|social security|\bssn\b|date of birth|\bdob\b|password|log ?in|username/;
+
+  /**
+   * Applies one AI decision {action, answer_key, option, draft, confidence}
+   * to a field, with every path locally validated — the model proposes, this
+   * function disposes:
+   *   - "map": same pipeline as resolveApiKey (option matching, placeholder
+   *     guard, work-auth namespace rejection).
+   *   - "option": only for option fields, and the returned string must match
+   *     one of the field's actual options via OptionMatcher — never trusted
+   *     verbatim.
+   *   - "draft": only for free-text inputs, only for questions outside
+   *     DRAFT_FORBIDDEN_RE, length-capped. Result is marked aiGenerated so
+   *     the panel pins it for human reading before submit.
+   * Returns null when the decision should be discarded (keeps the local
+   * NEEDS_REVIEW/UNMATCHED record instead).
+   */
+  function resolveApiAction(field, bank, decision) {
+    if (!decision || !decision.action || decision.action === 'skip') return null;
+    const confidence = typeof decision.confidence === 'number' ? decision.confidence : 0;
+    const hay = fieldHaystack(field);
+
+    // Work authorization stays a closed subsystem no matter what the model
+    // returns (spec §4.3 rule 3 — unchanged by the AI-drafting feature).
+    if (WORK_AUTH_DETECT_RE.test(hay)) {
+      return finalize({ status: 'NEEDS_REVIEW', category: 'work_auth', tier: 4, lockIcon: true, reason: 'api_disabled_for_work_auth' });
+    }
+
+    if (decision.action === 'map') {
+      const mapped = resolveApiKey(field, bank, decision.answer_key, confidence);
+      return mapped.status === 'UNMATCHED' ? null : mapped;
+    }
+
+    if (decision.action === 'option') {
+      if (confidence < 0.75) return null;
+      if (!['select', 'radio_group', 'checkbox_group'].includes(field.input_type)) return null;
+      const matched = OptionMatcher.matchOption(String(decision.option || ''), field.options || []);
+      if (!matched) return null;
+      return finalize({
+        status: 'FILL', value: matched, bankKey: null, confidence, tier: 4,
+        category: 'ai_answer', reason: 'api_option', aiGenerated: true,
+      });
+    }
+
+    if (decision.action === 'draft') {
+      if (confidence < 0.6) return null;
+      if (!['text', 'textarea', 'contenteditable'].includes(field.input_type)) return null;
+      if (DRAFT_FORBIDDEN_RE.test(hay)) return null;
+      const draft = String(decision.draft || '').trim();
+      if (!draft || draft.length > 3000) return null;
+      return finalize({
+        status: 'FILL_AI_DRAFT', value: draft, bankKey: null, confidence, tier: 4,
+        category: 'ai_answer', reason: 'api_draft', aiGenerated: true,
+      });
+    }
+
+    return null;
+  }
+
   /**
    * Repeatable-block indexing (spec §4.4 / §11#4). Match rules always emit
    * index-0 keys (experience.0.company, education.0.school, ...). Given the
@@ -377,7 +439,7 @@
     return results;
   }
 
-  const Matcher = { matchField, resolveApiKey, getByPath, isPlaceholder, resolveValue, applyRepeatableBlockIndexing, WORK_AUTH_DETECT_RE };
+  const Matcher = { matchField, resolveApiKey, resolveApiAction, getByPath, isPlaceholder, resolveValue, applyRepeatableBlockIndexing, WORK_AUTH_DETECT_RE, DRAFT_FORBIDDEN_RE };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = Matcher;
