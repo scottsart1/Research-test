@@ -17,6 +17,7 @@ const Fuzzy = require('../lib/fuzzy.js');
 const OptionMatcher = require('../lib/option-matcher.js');
 const WorkAuthMatcher = require('../lib/workauth-matcher.js');
 const EeoStrings = require('../lib/eeo-strings.js');
+const ResumeUtils = require('../lib/resume-utils.js');
 const Matcher = require('../content/matcher.js');
 
 const defaultBank = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/default-answer-bank.json'), 'utf8'));
@@ -408,6 +409,31 @@ console.log('\n=== Additional coverage: Tier 1/2/3, placeholders, stock answers,
   test('resolveApiKey below confidence 0.8 -> UNMATCHED', () => {
     const r = Matcher.resolveApiKey(field({}), defaultBank, 'identity.first_name', 0.5);
     assert.strictEqual(r.status, 'UNMATCHED');
+  });
+}
+
+console.log('\n=== Resume attachment (spec §6 "file" + resume-utils.js) ===');
+{
+  test('base64 round-trip preserves bytes exactly, including the bundled PDF', () => {
+    const bytes = new Uint8Array([0, 1, 2, 253, 254, 255, 65, 66, 67]);
+    const roundTripped = ResumeUtils.base64ToBytes(ResumeUtils.bytesToBase64(bytes));
+    assert.deepStrictEqual(Array.from(roundTripped), Array.from(bytes));
+
+    const pdfPath = path.join(__dirname, '../assets/Resume_Emily_Terry.pdf');
+    const original = fs.readFileSync(pdfPath);
+    const base64 = ResumeUtils.bytesToBase64(new Uint8Array(original));
+    const decoded = Buffer.from(ResumeUtils.base64ToBytes(base64));
+    assert.strictEqual(Buffer.compare(decoded, original), 0);
+  });
+  test('"Resume upload" file field routes to documents.resume_filename and fills', () => {
+    const r = Matcher.matchField(field({ input_type: 'file', label_text: 'Resume upload' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.bankKey, 'documents.resume_filename');
+  });
+  test('"CV" file field also routes to documents.resume_filename', () => {
+    const r = Matcher.matchField(field({ input_type: 'file', label_text: 'CV' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.bankKey, 'documents.resume_filename');
   });
 }
 

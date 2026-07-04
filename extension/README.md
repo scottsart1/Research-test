@@ -17,9 +17,12 @@ configure, and test what was built.
    Options, or click "Options" in the popup) and:
    - Select Emily's **work-authorization preset** (F-1 OPT / Permanent
      Resident / US Citizen). This drives every work-authorization answer.
-   - Fill in the remaining `«placeholder»` values (address, salary policy,
-     EEO choices, etc. — see `data/default-answer-bank.json` and the
-     "Operating Notes for Scott" section of the spec).
+   - Check the **Resume** section — `Resume_Emily_Terry.pdf` is bundled and
+     auto-loaded on install, so file-upload fields are already covered. Use
+     "Upload a different resume" there if the resume changes.
+   - Review any remaining `«placeholder»` values (EEO choices are the main
+     ones left — see `data/default-answer-bank.json`). Everything else
+     (address, salary, YoE for niche skills, etc.) already has a real value.
    - Optionally enable the Claude API fallback and paste an Anthropic API
      key (only used for question→key *mapping*, never for generating
      answers, and never for work-authorization questions).
@@ -80,8 +83,17 @@ form.
   the same option-matching/placeholder-guard pipeline as local tiers).
   Keyboard shortcut, snapshot/restore ("Clear all fills"), and the Tier 3
   hint-adapters are implemented. The resume-attachment `DataTransfer`
-  injection is explicitly out of scope per spec §6 ("stretch") — file
-  inputs are flagged "attach manually" instead.
+  injection (spec §6's Phase 4 "stretch" item) is implemented too, now that
+  a real resume is available: `assets/Resume_Emily_Terry.pdf` is bundled
+  with the extension, seeded into `chrome.storage.local` as base64 on
+  install (`lib/resume-utils.js` handles the byte<->base64 conversion,
+  round-trip-tested against the actual PDF in `test/run-tests.js`), and
+  `content/filler.js`'s `file` strategy reconstructs a `File` from it and
+  injects it into the matched upload field via `DataTransfer`. A Tier 2 rule
+  (`resume_upload` in `data/match-rules.js`) routes labels like "Resume",
+  "CV", or "upload your resume" to this path. If no resume is stored (or the
+  page's upload field isn't recognized), it still falls back to flagging
+  "attach manually" rather than guessing.
 - Live-ATS end-to-end verification (spec §10 Phase 3 acceptance criterion:
   "one live posting per ATS with zero incorrect fills") requires a live
   browser session against real postings and hasn't been run here — the

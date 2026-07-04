@@ -176,6 +176,11 @@
     { name: 'skills_list', test: /(list|summar).{0,20}(your )?(technical )?skills|key skills/, key: 'skills_flat_list' },
     { name: 'certifications', test: /certifications?/, key: 'certifications' },
 
+    // --- Resume/CV upload (routes the field to FILL; filler.js's file()
+    // strategy ignores this string value and attaches the actual stored
+    // bytes instead — see spec §6 "file" + resume-utils.js) ---
+    { name: 'resume_upload', test: /r[ée]sum[ée]|^cv$|curriculum vitae|upload.{0,15}resume|attach.{0,15}resume/, key: 'documents.resume_filename' },
+
     // --- Consents / logistics booleans ---
     { name: 'over_18', test: /(are you )?(at least )?18 years/, key: 'logistics.over_18' },
     { name: 'worked_here_before', test: /(previously|ever) (worked|employed) (here|at|for) (this company|us)/, key: 'logistics.worked_here_before' },

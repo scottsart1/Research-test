@@ -241,8 +241,30 @@
       return { ok: true };
     },
 
-    async file() {
-      return { ok: false, note: 'attach_manually' };
+    async file(field, el) {
+      if (typeof chrome === 'undefined' || !chrome.storage) {
+        return { ok: false, note: 'attach_manually' };
+      }
+      const stored = await new Promise((resolve) => {
+        chrome.storage.local.get(['resumeFile'], (data) => resolve(data.resumeFile || null));
+      });
+      if (!stored || !stored.base64) {
+        return { ok: false, note: 'attach_manually_no_resume_stored' };
+      }
+      try {
+        const bytes = root.ResumeUtils.base64ToBytes(stored.base64);
+        const blob = new Blob([bytes], { type: stored.type || 'application/pdf' });
+        const file = new File([blob], stored.name || 'resume.pdf', { type: stored.type || 'application/pdf' });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        el.files = dt.files;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        const ok = el.files.length === 1 && el.files[0].name === file.name;
+        return ok ? { ok: true } : { ok: false, note: 'resume_attach_did_not_take' };
+      } catch (err) {
+        return { ok: false, note: 'resume_attach_failed: ' + (err && err.message) };
+      }
     },
   };
 
@@ -268,6 +290,11 @@
         return true;
       case 'contenteditable':
         return textOf(el) === String(expectedValue);
+      case 'file':
+        // el.value is a browser-synthesized fake path, never comparable to
+        // the resume filename — check el.files instead (set by the file()
+        // strategy's DataTransfer injection).
+        return !!(el.files && el.files.length > 0);
       default:
         return el.value === String(expectedValue) || el.value === expectedValue;
     }
@@ -303,7 +330,7 @@
 
     let result;
     try {
-      if (field.input_type === 'select' || field.input_type === 'text' || field.input_type === 'textarea' || field.input_type === 'contenteditable' || field.input_type === 'date' || field.input_type === 'typeahead' || field.input_type === 'checkbox') {
+      if (field.input_type === 'select' || field.input_type === 'text' || field.input_type === 'textarea' || field.input_type === 'contenteditable' || field.input_type === 'date' || field.input_type === 'typeahead' || field.input_type === 'checkbox' || field.input_type === 'file') {
         result = await strategy(field, field.__elements[0], value);
       } else {
         result = await strategy(field, value);

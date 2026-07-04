@@ -107,7 +107,48 @@
     exportBtn: document.getElementById('export-btn'),
     importInput: document.getElementById('import-input'),
     saveStatus: document.getElementById('save-status'),
+    resumeStatus: document.getElementById('resume-status'),
+    resumeInput: document.getElementById('resume-input'),
+    resumeRemoveBtn: document.getElementById('resume-remove-btn'),
   };
+
+  function formatBytes(n) {
+    if (!n && n !== 0) return '';
+    if (n < 1024) return `${n} B`;
+    return `${(n / 1024).toFixed(1)} KB`;
+  }
+
+  function renderResumeStatus(resumeFile) {
+    if (!resumeFile) {
+      els.resumeStatus.textContent = 'No resume stored — file-upload fields will be flagged "attach manually".';
+      els.resumeStatus.className = 'status-row warn';
+      return;
+    }
+    const sourceLabel = resumeFile.source === 'bundled' ? 'bundled default' : 'uploaded';
+    els.resumeStatus.textContent = `${resumeFile.name} (${formatBytes(resumeFile.size)}, ${sourceLabel})`;
+    els.resumeStatus.className = 'status-row ok';
+  }
+
+  function loadResumeStatus() {
+    chrome.storage.local.get(['resumeFile'], (data) => renderResumeStatus(data.resumeFile));
+  }
+
+  els.resumeInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const bytes = new Uint8Array(reader.result);
+      const base64 = window.ResumeUtils.bytesToBase64(bytes);
+      const resumeFile = { name: file.name, type: file.type || 'application/pdf', base64, size: file.size, source: 'uploaded' };
+      chrome.storage.local.set({ resumeFile }, () => renderResumeStatus(resumeFile));
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  els.resumeRemoveBtn.addEventListener('click', () => {
+    chrome.storage.local.remove('resumeFile', () => renderResumeStatus(null));
+  });
 
   function renderAtsToggles() {
     els.atsToggles.innerHTML = '';
@@ -300,4 +341,5 @@
   });
 
   load();
+  loadResumeStatus();
 })();

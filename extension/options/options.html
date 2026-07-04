@@ -59,7 +59,20 @@
       </section>
 
       <section class="card">
-        <h2>5. Answer bank</h2>
+        <h2>5. Resume</h2>
+        <p class="muted">Used only for file-upload fields (spec §6/§11). Stored locally in this browser profile — never sent anywhere except the job-application page you're filling.</p>
+        <div id="resume-status" class="status-row"></div>
+        <div class="button-row">
+          <label class="file-btn">
+            Upload a different resume
+            <input type="file" id="resume-input" accept="application/pdf" hidden />
+          </label>
+          <button id="resume-remove-btn">Remove</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>6. Answer bank</h2>
         <p class="muted"><span id="placeholder-count"></span></p>
         <div class="tabs">
           <button class="tab-btn active" data-tab="quick">Quick fields</button>
@@ -88,6 +101,7 @@
       <div id="save-status" class="save-status"></div>
     </div>
     <script src="../lib/fuzzy.js"></script>
+    <script src="../lib/resume-utils.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

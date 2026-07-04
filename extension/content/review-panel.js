@@ -155,7 +155,8 @@
     icon.textContent = (o.lockIcon ? '🔒 ' : '') + (ICONS[o.status] || '•');
     const body = document.createElement('div');
     body.innerHTML = `<div class="label">${escapeHtml(o.label_text || o.field_id)}</div>
-      <div class="meta">${escapeHtml(categoryLabel(o.category))}${o.value ? ' — ' + escapeHtml(String(o.value)) : ''}</div>`;
+      <div class="meta">${escapeHtml(categoryLabel(o.category))}${o.value ? ' — ' + escapeHtml(String(o.value)) : ''}</div>
+      ${o.note ? `<div class="meta">${escapeHtml(String(o.note))}</div>` : ''}`;
     item.appendChild(icon);
     item.appendChild(body);
     item.addEventListener('click', () => handlers.onItemClick && handlers.onItemClick(o));

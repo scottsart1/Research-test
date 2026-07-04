@@ -9,7 +9,9 @@
  * the API or accept an answer_key that resolves into the work-auth/
  * immigration_status namespace.
  */
-importScripts('../lib/fuzzy.js', '../lib/workauth-matcher.js');
+importScripts('../lib/fuzzy.js', '../lib/workauth-matcher.js', '../lib/resume-utils.js');
+
+const BUNDLED_RESUME_PATH = 'assets/Resume_Emily_Terry.pdf';
 
 const DEFAULT_SETTINGS = {
   immigrationStatus: '',
@@ -37,6 +39,28 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
   if (!existing.settings) {
     await chrome.storage.local.set({ settings: DEFAULT_SETTINGS });
+  }
+
+  const existingResume = await chrome.storage.local.get(['resumeFile']);
+  if (!existingResume.resumeFile) {
+    try {
+      const url = chrome.runtime.getURL(BUNDLED_RESUME_PATH);
+      const resp = await fetch(url);
+      const buf = await resp.arrayBuffer();
+      const base64 = ResumeUtils.bytesToBase64(new Uint8Array(buf));
+      await chrome.storage.local.set({
+        resumeFile: {
+          name: 'Resume_Emily_Terry.pdf',
+          type: 'application/pdf',
+          base64,
+          size: buf.byteLength,
+          source: 'bundled',
+        },
+      });
+    } catch (e) {
+      // No bundled resume available — file inputs fall back to
+      // "attach manually" until one is uploaded on the options page.
+    }
   }
 });
 
