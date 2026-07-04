@@ -28,12 +28,29 @@
   // ---------------------------------------------------------------------
 
   function setNativeValue(el, value) {
-    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (descriptor && descriptor.set) {
-      descriptor.set.call(el, value);
+    // Custom-widget guard: SuccessFactors renders comboboxes as non-input
+    // elements; calling HTMLInputElement's native setter on them throws
+    // "Illegal invocation" (observed live on an EY run). Only use the
+    // prototype setter for real inputs/textareas; everything else gets a
+    // plain property write or textContent.
+    const isInput = typeof HTMLInputElement !== 'undefined' && el instanceof HTMLInputElement;
+    const isTextArea = typeof HTMLTextAreaElement !== 'undefined' && el instanceof HTMLTextAreaElement;
+    if (isInput || isTextArea) {
+      const proto = isTextArea ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(el, value);
+      } else {
+        el.value = value;
+      }
+    } else if ('value' in el) {
+      try {
+        el.value = value;
+      } catch (e) {
+        el.textContent = String(value);
+      }
     } else {
-      el.value = value;
+      el.textContent = String(value);
     }
     ['input', 'change', 'blur'].forEach((t) => el.dispatchEvent(new Event(t, { bubbles: true })));
   }
@@ -163,9 +180,21 @@
         await sleep(20);
         return { ok: true };
       }
-      // Native <select>
-      const options = Array.from(el.options || []);
-      const idx = options.findIndex((o) => textOf(o) === value || o.value === value);
+      // Native <select>. Dependent selects (State only populates after
+      // Country changes) may still be loading options when we get here —
+      // wait once for late-arriving options before giving up.
+      let options = Array.from(el.options || []);
+      let idx = options.findIndex((o) => textOf(o) === value || o.value === value);
+      if (idx === -1) {
+        await sleep(900);
+        options = Array.from(el.options || []);
+        // Options may have loaded with different casing/format than the
+        // originally-detected list; re-run the option matcher against them.
+        const OptionMatcher = root.OptionMatcher;
+        const labels = options.map(textOf);
+        const rematched = OptionMatcher ? OptionMatcher.matchOption(String(value), labels) : null;
+        idx = rematched ? labels.indexOf(rematched) : options.findIndex((o) => textOf(o) === value || o.value === value);
+      }
       if (idx === -1) return { ok: false, note: 'option_not_found_in_dom' };
       el.selectedIndex = idx;
       el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -223,17 +252,34 @@
     async typeahead(field, el, value) {
       el.focus();
       setNativeValue(el, String(value));
-      const listbox = await pollUntil(() => findListbox(el), 1500);
+      let listbox = await pollUntil(() => findListbox(el), 1200);
+
       if (!listbox) {
-        setNativeValue(el, ''); // never leave half-typed text (spec §6 / §11#2)
+        // Click-to-open combobox (SuccessFactors EEO selects open on click,
+        // not on typing — typing alone produced "no_listbox_appeared" live).
+        el.click();
+        listbox = await pollUntil(() => findListbox(el), 1200);
+      }
+
+      if (!listbox) {
+        // Not actually a typeahead? Plain inputs with aria-autocomplete but
+        // no popup behave like text — keep the typed value if it's a plain
+        // input, otherwise never leave half-typed text (spec §6 / §11#2).
+        const plainInput = el.tagName === 'INPUT' && !el.readOnly && el.getAttribute('role') !== 'combobox' && !el.getAttribute('aria-controls');
+        if (plainInput && el.value === String(value)) {
+          return { ok: true, note: 'typeahead_degraded_to_text' };
+        }
+        setNativeValue(el, '');
         return { ok: false, note: 'no_listbox_appeared' };
       }
+
       const optionEls = Array.from(listbox.querySelectorAll('[role="option"]'));
       const labels = optionEls.map(textOf);
       const OptionMatcher = root.OptionMatcher;
       const matched = OptionMatcher ? OptionMatcher.matchOption(String(value), labels) : labels.find((l) => l === value);
       if (!matched) {
         setNativeValue(el, '');
+        document.body.click(); // close the popup without selecting
         return { ok: false, note: 'no_matching_option_typed' };
       }
       optionEls[labels.indexOf(matched)].click();
@@ -242,6 +288,11 @@
     },
 
     async file(field, el) {
+      // Only genuine file inputs accept DataTransfer; anything else that
+      // got classified 'file' is a custom widget the human must click.
+      if (!(el && el.tagName === 'INPUT' && el.getAttribute('type') === 'file')) {
+        return { ok: false, note: 'attach_manually_custom_widget' };
+      }
       if (typeof chrome === 'undefined' || !chrome.storage) {
         return { ok: false, note: 'attach_manually' };
       }

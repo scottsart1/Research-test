@@ -61,6 +61,60 @@
       <option>Referral</option>
       <option>Job board</option>
     </select>
+
+    <label for="prefix">Prefix</label>
+    <select id="prefix" name="prefix">
+      <option value="">No Selection</option>
+      <option>Mr.</option>
+      <option>Ms.</option>
+      <option>Mrs.</option>
+      <option>Dr.</option>
+    </select>
+
+    <label for="middleName">Legal Middle Name</label>
+    <input type="text" id="middleName" name="middleName" />
+
+    <label for="addr2">Address Line 2</label>
+    <input type="text" id="addr2" name="addr2" />
+
+    <label for="countryRegion">Country/Region</label>
+    <select id="countryRegion" name="countryRegion">
+      <option value="">— Make a Selection —</option>
+      <option>United States</option>
+      <option>Canada</option>
+    </select>
+
+    <label for="stateProvince">State/Province</label>
+    <select id="stateProvince" name="stateProvince">
+      <option value="">No Selection</option>
+      <option>Virginia</option>
+      <option>Maryland</option>
+    </select>
+
+    <label for="eyAlumni">Are you an EY Alumni?</label>
+    <select id="eyAlumni" name="eyAlumni">
+      <option value="">No Selection</option>
+      <option>Yes</option>
+      <option>No</option>
+    </select>
+  </fieldset>
+
+  <fieldset>
+    <legend>Empty repeatable sections (SuccessFactors-style "Add" expansion)</legend>
+    <h3>Work Experience</h3>
+    <div id="workExpEmpty"><em>There are no items in this section.</em></div>
+    <button type="button" id="addWorkExp">+ Add</button>
+    <div id="workExpFields"></div>
+
+    <h3>Education</h3>
+    <div id="eduEmpty"><em>There are no items in this section.</em></div>
+    <button type="button" id="addEdu">+ Add</button>
+    <div id="eduFields"></div>
+
+    <h3>Language Skills</h3>
+    <div id="langEmpty"><em>There are no items in this section.</em></div>
+    <button type="button" id="addLang">+ Add</button>
+    <div id="langFields"></div>
   </fieldset>
 
   <fieldset>
@@ -341,6 +395,29 @@
         listbox.appendChild(div);
       });
     listbox.style.display = q ? 'block' : 'none';
+  });
+
+  // SuccessFactors-style "Add" expansion: clicking mounts fresh fields with
+  // no pre-filled values, simulating a lazily-rendered repeatable section.
+  // Verifies content/section-expander.js's click -> wait -> re-fill cycle.
+  document.getElementById('addWorkExp').addEventListener('click', function () {
+    document.getElementById('workExpEmpty').style.display = 'none';
+    document.getElementById('workExpFields').innerHTML =
+      '<label for="we_employer">Employer</label><input type="text" id="we_employer" />' +
+      '<label for="we_title">Title</label><input type="text" id="we_title" />' +
+      '<label for="we_start">Start Date (Month / Day / Year)</label><input type="text" id="we_start" />';
+  });
+  document.getElementById('addEdu').addEventListener('click', function () {
+    document.getElementById('eduEmpty').style.display = 'none';
+    document.getElementById('eduFields').innerHTML =
+      '<label for="ed_school">School</label><input type="text" id="ed_school" />' +
+      '<label for="ed_degree">Degree</label><select id="ed_degree"><option value="">-- Select --</option><option>Bachelor\'s Degree</option><option>Master\'s Degree</option></select>' +
+      '<label for="ed_major">Major</label><input type="text" id="ed_major" />';
+  });
+  document.getElementById('addLang').addEventListener('click', function () {
+    document.getElementById('langEmpty').style.display = 'none';
+    document.getElementById('langFields').innerHTML =
+      '<label for="lang_name">Language</label><input type="text" id="lang_name" />';
   });
 </script>
 </body>

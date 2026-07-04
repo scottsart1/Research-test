@@ -179,7 +179,7 @@
       frameToast('No answer bank configured — open the extension options page first.');
       return;
     }
-    if (!settings.immigrationStatus && IS_TOP) {
+    if (!settings.immigrationStatus && IS_TOP && !opts.skipAi) {
       frameToast('No work-authorization preset selected in options — those questions will be flagged for review.');
     }
 
@@ -219,7 +219,11 @@
     // unmatched AND needs-review — goes to the model for semantic
     // understanding (map to a known answer, pick the right option, or draft
     // a grounded qualitative answer). Locked/attestation fields never go.
-    const aiCandidates = results.filter(aiEligible);
+    // Skipped during the fast initial pass and each section-expansion
+    // refill (opts.skipAi) so clicking through "Add" controls doesn't fire
+    // an API call per click; the final pass in runFillCycle() runs it once
+    // over the fully-expanded page.
+    const aiCandidates = opts.skipAi ? [] : results.filter(aiEligible);
     const tier4Results = await resolveTier4(aiCandidates.map((r) => r.field));
     for (const r of aiCandidates) {
       const decision = tier4Results[r.field.id];
@@ -258,6 +262,37 @@
 
     publishRecords(records);
     persistState(records);
+  }
+
+  /**
+   * Full "clickable" fill cycle (owner request: "produce the needful after
+   * clicking and going through the options available on the page"):
+   *   1. Fast local-only pass — fills everything already on the page.
+   *   2. SectionExpander clicks "Add" on empty repeatable sections (work
+   *      experience, education, languages) and re-runs a local-only pass
+   *      after each click, so newly-mounted rows get filled too.
+   *   3. One final pass WITH the AI tier enabled, over the now-fully-
+   *      expanded page — this is where drafted/mapped answers for anything
+   *      still unresolved (including inside the just-expanded sections) get
+   *      resolved, in a single batched API call rather than one per click.
+   */
+  async function runFillCycle(adapter, opts) {
+    await runFillPass(adapter, Object.assign({}, opts, { skipAi: true }));
+
+    if (window.SectionExpander) {
+      try {
+        const { bank } = await loadSettings();
+        if (bank) {
+          await window.SectionExpander.expandAndFill(bank, async () => {
+            await runFillPass(adapter, { force: false, skipAi: true });
+          });
+        }
+      } catch (e) {
+        // Expansion is best-effort and must never block the rest of the fill.
+      }
+    }
+
+    await runFillPass(adapter, { force: false, skipAi: false });
   }
 
   // ---------------------------------------------------------------------
@@ -354,7 +389,7 @@
     if (stopFieldWatcher) stopFieldWatcher();
     stopFieldWatcher = window.Observer.startFieldWatcher(() => {
       if (IS_TOP) {
-        window.ReviewPanel.showToast('New fields detected on this page.', () => runFillPass(adapter, { force: false }));
+        window.ReviewPanel.showToast('New fields detected on this page.', () => runFillCycle(adapter, { force: false }));
       } else {
         chrome.runtime.sendMessage({ type: 'FRAME_NEW_FIELDS' });
       }
@@ -363,7 +398,7 @@
     if (IS_TOP) {
       if (stopRouteWatcher) stopRouteWatcher();
       stopRouteWatcher = window.Observer.startRouteWatcher(() => {
-        window.ReviewPanel.showToast('New page detected — fill this page?', () => runFillPass(adapter, { force: false }));
+        window.ReviewPanel.showToast('New page detected — fill this page?', () => runFillCycle(adapter, { force: false }));
       }, 700);
     }
   }
@@ -371,7 +406,7 @@
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'AUTOFILL_START') {
       const adapter = pickAdapter();
-      runFillPass(adapter, { force: !!message.force }).then(() => {
+      runFillCycle(adapter, { force: !!message.force }).then(() => {
         offerRefillOnNewFields(adapter);
         sendResponse({ ok: true });
       });

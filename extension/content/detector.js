@@ -116,31 +116,68 @@
     return '';
   }
 
-  function labelFromPrecedingSiblingOrLegend(el) {
+  function isFormControl(node) {
+    return node && /^(input|select|textarea|button)$/i.test(node.tagName || '');
+  }
+
+  /**
+   * Sibling-text label guess with OWNERSHIP tracking. Some ATSs (Pinpoint)
+   * render the label AFTER the input, so the naive "previous sibling text"
+   * walk hands field N's label to field N+1 — observed live as a City input
+   * labeled "First Name" being filled with "Emily". Rules:
+   *   - a text node/element can label at most ONE field (claimed set);
+   *   - if the preceding candidate is already claimed, try the FOLLOWING
+   *     sibling instead (label-after-input layouts);
+   *   - never cross another form control while walking.
+   */
+  function labelFromSiblingsOrLegend(el, claimed) {
     const fieldset = el.closest ? el.closest('fieldset') : null;
     if (fieldset) {
       const legend = fieldset.querySelector('legend');
-      if (legend) return textOf(legend);
+      if (legend && textOf(legend)) return textOf(legend);
     }
+
     let sib = el.previousElementSibling;
     let hops = 0;
     while (sib && hops < 3) {
+      if (isFormControl(sib) || sib.querySelector && sib.querySelector('input, select, textarea')) break;
       const t = textOf(sib);
-      if (t) return t;
+      if (t) {
+        if (!claimed.has(sib)) {
+          claimed.add(sib);
+          return t;
+        }
+        break; // already labels an earlier field — fall through to next-sibling
+      }
       sib = sib.previousElementSibling;
+      hops += 1;
+    }
+
+    sib = el.nextElementSibling;
+    hops = 0;
+    while (sib && hops < 2) {
+      if (isFormControl(sib) || (sib.querySelector && sib.querySelector('input, select, textarea'))) break;
+      const t = textOf(sib);
+      if (t && !claimed.has(sib)) {
+        claimed.add(sib);
+        return t;
+      }
+      if (t) break;
+      sib = sib.nextElementSibling;
       hops += 1;
     }
     return '';
   }
 
-  function extractLabel(el) {
+  function extractLabel(el, claimed) {
+    claimed = claimed || new Set();
     return (
       labelFromFor(el) ||
       labelFromAriaLabelledby(el) ||
       el.getAttribute('aria-label') ||
       labelFromWrapping(el) ||
       labelFromAtsAttribute(el) ||
-      labelFromPrecedingSiblingOrLegend(el) ||
+      labelFromSiblingsOrLegend(el, claimed) ||
       el.getAttribute('placeholder') ||
       ''
     ).trim();
@@ -292,7 +329,13 @@
     scopeDocument = scopeDocument || document;
     const candidates = [];
     collectCandidates(scopeDocument, candidates);
-    const visibleCandidates = candidates.filter((el) => isVisible(el) && !isDisabled(el));
+    // file inputs are exempt from the visibility filter: upload widgets
+    // (SuccessFactors, Greenhouse) hide the real <input type=file> behind a
+    // styled button, but DataTransfer injection works on the hidden input.
+    const visibleCandidates = candidates.filter(
+      (el) => !isDisabled(el) && (isVisible(el) || (el.tagName === 'INPUT' && el.getAttribute('type') === 'file'))
+    );
+    const claimedLabelNodes = new Set();
 
     const { grouped, standalone } = groupRadiosAndCheckboxes(visibleCandidates);
     const fields = [];
@@ -304,7 +347,7 @@
       fields.push({
         id: nextId(),
         input_type: group.kind,
-        label_text: extractContext(anchor) || extractLabel(anchor),
+        label_text: extractContext(anchor) || extractLabel(anchor, claimedLabelNodes),
         context_text: extractContext(anchor),
         attributes: captureAttributes(anchor),
         options,
@@ -327,7 +370,7 @@
       fields.push({
         id: nextId(),
         input_type: classification.type,
-        label_text: extractLabel(el),
+        label_text: extractLabel(el, claimedLabelNodes),
         context_text: extractContext(el),
         attributes: captureAttributes(el),
         options: optionsFor(el, classification),

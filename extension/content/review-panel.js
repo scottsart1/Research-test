@@ -18,6 +18,7 @@
     UNMATCHED: '⛔',
     SKIPPED_PREFILLED: '⏭️',
     SKIPPED_UNSUPPORTED_TYPE: '⛔',
+    SKIPPED_OPTIONAL: '➖',
     FAILED: '⛔',
   };
 
@@ -89,6 +90,7 @@
     const warnings = outcomes.filter((o) => o.status === 'FILLED_LOW_CONFIDENCE' || o.status === 'FILLED_UNVERIFIED').length;
     const review = outcomes.filter((o) => o.status === 'NEEDS_REVIEW' || o.status === 'UNMATCHED' || o.status === 'FAILED' || o.status === 'SKIPPED_UNSUPPORTED_TYPE').length;
     const prefilled = outcomes.filter((o) => o.status === 'SKIPPED_PREFILLED').length;
+    const optional = outcomes.filter((o) => o.status === 'SKIPPED_OPTIONAL').length;
     const lockItems = outcomes.filter((o) => o.lockIcon);
     const aiItems = outcomes.filter((o) => !o.lockIcon && isAiItem(o));
     const clearanceFlag = outcomes.some((o) => o.category === 'clearance' && o.clearanceRequiredNotice);
@@ -107,6 +109,7 @@
         <span>⚠️ ${warnings} low-confidence</span>
         <span>⛔ ${review} need review</span>
         ${prefilled > 0 ? `<span>⏭️ ${prefilled} already filled</span>` : ''}
+        ${optional > 0 ? `<span>➖ ${optional} left blank (optional)</span>` : ''}
       </div>`;
     panel.appendChild(header);
 

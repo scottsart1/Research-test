@@ -116,6 +116,26 @@
     { name: 'password', test: /password/, special: 'always_review' },
     { name: 'login_username', test: /^log[- ]?in\b|^username/, special: 'always_review' },
 
+    // --- Deliberately-blank optional fields (EY/SuccessFactors corpus) ---
+    { name: 'middle_name', test: /middle (name|initial)/, special: 'skip_optional' },
+    { name: 'second_or_maiden_name', test: /(second|maiden|mother'?s|father'?s) (last )?name/, special: 'skip_optional' },
+    { name: 'address_line2', test: /address (line )?2|apartment|apt\.?\b|suite|unit number/, special: 'skip_optional' },
+    { name: 'conditional_followup', test: /^if (yes|no|applicable)\b/, special: 'skip_optional' },
+
+    // --- Salutation prefix: only when the options actually look like
+    // salutations (Prefix/Title collide with job-title otherwise) ---
+    {
+      name: 'prefix_salutation',
+      test: /^prefix$|^salutation$|^title$/,
+      resolve(hay, field) {
+        const opts = ((field && field.options) || []).join(' ').toLowerCase();
+        return /\bmr\b|\bms\b|\bmrs\b|\bdr\b|\bmx\b/.test(opts) ? 'identity.prefix' : null;
+      },
+    },
+
+    // --- Company-alumni screeners (EY "Are you an EY Alumni?") ---
+    { name: 'company_alumni', test: /\balumni\b|\balumnus\b|former (employee|member) of (this|our|the) (firm|company|organi[sz]ation)/, key: 'logistics.worked_here_before' },
+
     // --- Per-skill years-of-experience (§4.5) ---
     {
       name: 'skill_yoe',
@@ -151,7 +171,20 @@
     { name: 'fed_special_hiring', test: /(schedule a|special hiring authority|non-?competitive (eligibility|appointment))/, key: 'federal.special_hiring_authority' },
 
     // --- Salary variants ---
-    { name: 'salary_range_split', test: /compensation range|salary range/, key: 'compensation.salary_answer_text' },
+    {
+      // Range-bucket pickers ("please select the range that most closely
+      // represents your desired total compensation" with $-bucket radio
+      // options, seen live on EY) need the NUMERIC desired salary so §5.5
+      // range mapping can pick the bucket. Order-independent lookaheads —
+      // real-world phrasing puts arbitrary text between "range" and
+      // "compensation" (a fixed-gap regex missed the EY wording entirely).
+      name: 'salary_range_bucket',
+      test: /(?=.*\brange\b)(?=.*(compensation|salary|pay))/,
+      resolve(hay, field) {
+        const isChoice = field && ['radio_group', 'select', 'checkbox_group'].includes(field.input_type);
+        return isChoice ? 'compensation.desired_salary_annual' : 'compensation.salary_answer_text';
+      },
+    },
     { name: 'salary_desired', test: /^(desired|expected|target|minimum) (salary|compensation|pay|base|rate)/, key: 'compensation.desired_salary_annual' },
     { name: 'salary_expectation', test: /salary (expectation|requirement)s?/, key: 'compensation.salary_answer_text' },
 
@@ -247,8 +280,10 @@
       },
     },
     {
+      // "State/Province" normalizes to "state province" (slash stripped),
+      // so the pattern must match the space form — a live EY run missed it.
       name: 'state',
-      test: /^state$|state\/province|state\s*\/\s*province/,
+      test: /^state( province)?$|^province$/,
       resolve(hay) {
         return EXPERIENCE_CONTEXT_RE.test(hay) ? 'experience.0.location_state' : 'identity.state';
       },
@@ -256,7 +291,7 @@
     { name: 'zip', test: /zip ?(\/? ?postal )?code|postal code/, key: 'identity.zip' },
     {
       name: 'country',
-      test: /^country$|country of residence/,
+      test: /^country( region)?$|country of residence/,
       resolve(hay) {
         // "Phone Country Code" must not land here; the phone rule owns it.
         if (/phone|dial|calling code/.test(hay)) return null;
@@ -271,15 +306,27 @@
 
     // --- Resume/CV upload (routes the field to FILL; filler.js's file()
     // strategy ignores this string value and attaches the actual stored
-    // bytes instead — see spec §6 "file" + resume-utils.js) ---
-    { name: 'resume_upload', test: /r[ée]sum[ée]|^cv$|curriculum vitae|upload.{0,15}resume|attach.{0,15}resume/, key: 'documents.resume_filename' },
+    // bytes instead). Gated to real file inputs: page prose like "please
+    // upload your resume" otherwise matched unrelated fields via context
+    // (two "Language" selects on a live EY run). Cover letters are skipped
+    // per documents.cover_letter_policy. ---
+    {
+      name: 'resume_upload',
+      test: /r[ée]sum[ée]|^cv$|curriculum vitae/,
+      resolve(hay, field) {
+        if (!field || field.input_type !== 'file') return null;
+        if (/cover letter/.test(hay)) return null;
+        return 'documents.resume_filename';
+      },
+    },
 
     // --- Common ad-hoc screening questions ---
     { name: 'may_contact_employer', test: /may we contact (this|your|the) (former |previous |current )?employer/, key: '__literal:Yes' },
     { name: 'willing_travel', test: /(willing|able|available).{0,15}travel|travel (requirement|percentage|up to)/, key: 'logistics.willing_to_travel' },
     { name: 'employment_type', test: /employment type|full[- ]?time or part[- ]?time|(seeking|looking for).{0,20}(full|part)[- ]?time/, key: 'logistics.employment_type' },
     { name: 'available_full_time', test: /(available|able).{0,20}(to )?work full[- ]?time/, key: '__literal:Yes' },
-    { name: 'languages_spoken', test: /languages? (spoken|you speak)|language proficiency|fluent in/, key: 'logistics.languages' },
+    { name: 'languages_spoken', test: /languages? (spoken|you speak)|fluent in|^language$/, key: 'logistics.languages' },
+    { name: 'language_proficiency', test: /(reading|writing|speaking|overall)? ?proficiency|fluency level/, key: 'logistics.language_proficiency' },
 
     // --- Consents / logistics booleans ---
     { name: 'over_18', test: /(are you )?(at least )?18 years/, key: 'logistics.over_18' },
@@ -292,11 +339,12 @@
     { name: 'veteran_service', test: /military (service|veteran)|are you a veteran/, key: 'logistics.military_veteran_service' },
 
     // --- EEO (exact-string matched separately in option-matcher; these just route the key) ---
-    { name: 'eeo_gender', test: /^gender$|gender identity/, key: 'eeo.gender' },
+    { name: 'eeo_gender', test: /^gender$|gender identity|what is your gender/, key: 'eeo.gender' },
     { name: 'eeo_race', test: /race\/?ethnicity|race or ethnicity|^race$|^ethnicity$/, key: 'eeo.race_ethnicity' },
     { name: 'eeo_hispanic', test: /hispanic or latino/, key: 'eeo.hispanic_latino' },
     { name: 'eeo_veteran', test: /veteran status|protected veteran/, key: 'eeo.veteran_status' },
-    { name: 'eeo_disability', test: /disability status|do you have a disability/, key: 'eeo.disability_status' },
+    { name: 'eeo_disability', test: /disability status|do you have a disability|^disability\b/, key: 'eeo.disability_status' },
+    { name: 'eeo_pronouns', test: /preferred pronouns|^pronouns$/, key: 'identity.pronouns' },
 
     // --- Stock free-text (always NEEDS_REVIEW per bank) ---
     { name: 'why_company', test: /why (do you want to work|are you interested in working).{0,20}(at|for)|why this company/, key: 'stock_answers.why_this_company.mode' },

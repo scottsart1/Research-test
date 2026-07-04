@@ -70,7 +70,10 @@
    * Returns null if unparseable (caller must treat as NEEDS_REVIEW per §5.5).
    */
   function parseRangeBucket(label) {
-    const n = normalize(label);
+    // Strip currency symbols and thousands separators BEFORE normalizing so
+    // "$90,001-$100,000" parses as 90001-100000 instead of fragmenting into
+    // small numbers (live failure on an EY compensation-range picker).
+    const n = normalize(String(label == null ? '' : label).replace(/[$,]/g, ''));
     if (!n) return null;
 
     let m = n.match(/less than (\d+(?:\.\d+)?)/);

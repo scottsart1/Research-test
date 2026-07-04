@@ -132,10 +132,58 @@ form.
   optional Claude Tier-4 fallback, and whatever remains lands in the panel
   as NEEDS_REVIEW with a "Copy skipped questions" button. Free-form essay
   prompts ("Why this company?") are deliberately never auto-answered.
+- **"Clickable" — expanding empty repeatable sections**: SuccessFactors-
+  style profiles (EY) render Work Experience/Education/Language sections as
+  empty with a bare "+ Add" control until clicked — nothing to fill exists
+  until then. `content/section-expander.js` finds "Add" controls whose
+  nearest preceding heading matches a whitelisted repeatable-section name
+  (work experience, education, languages), clicks them (capped at 6 clicks
+  per pass, budgeted per section from how many bank entries actually
+  exist — never over-adds), waits for the new fields to mount, and refills.
+  Guardrails: it refuses to click anything whose text matches
+  save/submit/apply/next/continue/delete/upload, so it can never advance or
+  submit a form (spec §11#10 holds even here). The full cycle is: fast
+  local-only fill → expand sections, refilling after each click → one
+  final pass with the AI tier enabled over the now-fully-expanded page, so
+  Claude sees the real field count instead of being batched once per click.
+- **Live-run bug fixes** (from a Bowhead/iCIMS run, an EY/SuccessFactors
+  run, and a Nüvitek/Pinpoint run):
+  - *Silent misfill*: Pinpoint renders some labels after their input rather
+    than before, and the naive "nearest text" walk handed one field's label
+    to the next — a City input got filled with "Emily" because it inherited
+    the neighboring First Name field's label. Fixed two ways: label
+    extraction now tracks which text nodes are already claimed as another
+    field's label (falling back to the following sibling when the
+    preceding one is taken), and a new `attrConflictGuard` in the matcher
+    cross-checks the label-derived match against the field's own
+    name/id attributes — if they name different categories (label says
+    "First Name", attribute says "city"), it's NEEDS_REVIEW, not a guess.
+  - *"Illegal invocation" crash*: SuccessFactors renders some comboboxes as
+    non-`<input>` elements; `setNativeValue` called `HTMLInputElement`'s
+    native setter on them and threw. It now only uses the native-setter
+    technique on real inputs/textareas and falls back to a plain property
+    write otherwise.
+  - *Combobox never opened*: SuccessFactors' EEO selects open their listbox
+    on click, not on typing — typing-only produced "no_listbox_appeared"
+    for every one of them. The typeahead strategy now also tries a click.
+  - *$-bucketed compensation ranges parsed wrong*: `$90,001-$100,000`
+    fragmented into small numbers before bucket parsing stripped the
+    currency symbols and thousands separators; fixed in `lib/fuzzy.js`.
+    Numeric-string bank values ("95000") now get the same bucket treatment
+    as real numbers.
+  - *Rule gaps*: "State/Province" (with the slash) and "Country/Region"
+    weren't matching because normalization strips the slash, turning them
+    into a space the old regex didn't anticipate; the resume-upload rule
+    was matching unrelated "Language" selects via leaked page prose (now
+    gated to real file inputs); added rules for salutation prefixes (only
+    when the options actually look like salutations), company-alumni
+    screeners, and a `skip_optional` outcome for deliberately-blank fields
+    (middle name, address line 2, conditional "If yes..." follow-ups) so
+    they render as a neutral ➖ instead of review-queue noise.
 - Live-ATS end-to-end verification (spec §10 Phase 3 acceptance criterion:
   "one live posting per ATS with zero incorrect fills") should be repeated
-  after any rule change — the iCIMS defects above were only caught by a
-  live run.
+  after any rule change — every defect above was only caught by a live run,
+  not by the unit suite alone.
 
 ## File map
 

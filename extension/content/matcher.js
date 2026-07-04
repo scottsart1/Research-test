@@ -110,10 +110,13 @@
       return { status: 'NEEDS_REVIEW', value: null, reason: 'option_field_no_options' };
     }
 
-    if (typeof raw === 'number') {
-      const exact = OptionMatcher.matchNumericExact(raw, options);
+    // Numeric-string bank values ("95000") get the same treatment as real
+    // numbers so salary/YoE range buckets work regardless of storage type.
+    const numeric = typeof raw === 'number' ? raw : (/^\d+(\.\d+)?$/.test(String(raw).trim()) ? parseFloat(raw) : null);
+    if (numeric !== null) {
+      const exact = OptionMatcher.matchNumericExact(numeric, options);
       if (exact) return { status: 'FILL', value: exact, reason: 'numeric_exact' };
-      const bucket = OptionMatcher.matchRangeBucket(raw, options);
+      const bucket = OptionMatcher.matchRangeBucket(numeric, options);
       if (bucket) return { status: 'FILL', value: bucket, reason: 'range_bucket' };
       return { status: 'NEEDS_REVIEW', value: null, reason: 'no_matching_range_bucket' };
     }
@@ -172,6 +175,12 @@
     if (special) {
       if (special.rule.special === 'always_review') {
         return { bankKey: null, confidence: 0.9, tier: 2, category: 'special', forceReview: true, reason: special.rule.name };
+      }
+      if (special.rule.special === 'skip_optional') {
+        // Deliberately-blank fields (middle name, address line 2,
+        // conditional "If yes..." follow-ups): not an error, not a fill —
+        // shown neutrally in the panel so the human knows it was seen.
+        return { bankKey: null, confidence: 0.9, tier: 2, category: 'optional', skipOptional: true, reason: special.rule.name };
       }
       if (special.rule.special === 'referral') {
         const isChoice = ['radio_group', 'select', 'checkbox_group', 'checkbox'].includes(field.input_type);
@@ -267,12 +276,15 @@
       if (t2.forceReview) {
         return finalize({ status: 'NEEDS_REVIEW', value: null, bankKey: null, confidence: t2.confidence, tier: 2, category: t2.category, reason: t2.reason });
       }
-      return finalize(applyBankKey(t2, bank, field));
+      if (t2.skipOptional) {
+        return finalize({ status: 'SKIPPED_OPTIONAL', value: null, bankKey: null, confidence: t2.confidence, tier: 2, category: t2.category, reason: t2.reason });
+      }
+      return finalize(attrConflictGuard(applyBankKey(t2, bank, field), field));
     }
 
     const t3 = tier3(field, hay, thresholds);
     if (t3) {
-      const resolved = applyBankKey(t3, bank, field);
+      const resolved = attrConflictGuard(applyBankKey(t3, bank, field), field);
       if (resolved.status === 'FILL' && t3.lowConfidence) {
         resolved.status = 'FILL_LOW_CONFIDENCE';
       }
@@ -280,6 +292,38 @@
     }
 
     return finalize({ status: 'UNMATCHED', value: null, bankKey: null, confidence: 0, tier: null, category: 'unmatched', reason: 'no_local_match' });
+  }
+
+  // Strong semantic tokens that may appear in a field's name/id attributes.
+  // When a label-derived match (Tier 2/3) contradicts what the machine
+  // attributes say the field is, trust neither: flag for review. Live
+  // failure this guards against (Pinpoint): label extraction misattributed
+  // "First Name" to a City input, filling "Emily" into city and zip.
+  const ATTR_HINT_TOKENS = ['email', 'phone', 'city', 'zip', 'postal', 'first', 'last', 'country', 'state', 'linkedin'];
+
+  function attrConflictGuard(result, field) {
+    if (!result || (result.status !== 'FILL' && result.status !== 'FILL_LOW_CONFIDENCE')) return result;
+    if (!result.bankKey) return result;
+    const attrs = field.attributes || {};
+    const attrText = Fuzzy.normalize(`${attrs.name || ''} ${attrs.id || ''}`);
+    if (!attrText) return result;
+    const keyText = result.bankKey.toLowerCase();
+    const present = ATTR_HINT_TOKENS.filter((t) => attrText.includes(t));
+    if (present.length === 0) return result;
+    // Consistent if ANY present token also appears in the matched key
+    // (e.g. name="phone_country_code" matched to phone_formatted is fine
+    // even though "country" alone would look contradictory).
+    const consistent = present.some((t) => keyText.includes(t === 'postal' ? 'zip' : t));
+    if (consistent) return result;
+    return {
+      status: 'NEEDS_REVIEW',
+      value: null,
+      bankKey: result.bankKey,
+      confidence: result.confidence,
+      tier: result.tier,
+      category: result.category,
+      reason: `attr_label_conflict:${present.join(',')}`,
+    };
   }
 
   function applyBankKey(tierHit, bank, field) {

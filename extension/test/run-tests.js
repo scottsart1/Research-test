@@ -617,6 +617,160 @@ console.log('\n=== Resume attachment (spec §6 "file" + resume-utils.js) ===');
   });
 }
 
+console.log('\n=== Live-run regressions (EY/SuccessFactors + Nüvitek/Pinpoint) ===');
+{
+  const Filler = require('../content/filler.js');
+
+  test('attrConflictGuard: mismatched label/attribute -> NEEDS_REVIEW instead of silent misfill', () => {
+    // Live bug: sibling-label extraction misattributed "First Name" as the
+    // label for a City input (Pinpoint renders labels after the input in
+    // some layouts). The attribute here ("cityField1") is close enough to
+    // signal city but not an exact Tier-1 dictionary hit, so the field
+    // falls through to label-based Tier 2/3 matching on "First Name" —
+    // exactly where the guard needs to catch the conflict and refuse to
+    // silently fill "Emily" into a city field.
+    const f = field({ input_type: 'text', label_text: 'First Name', attributes: { name: 'cityField1', id: 'cityField1' } });
+    const r = Matcher.matchField(f, defaultBank, {});
+    assert.strictEqual(r.status, 'NEEDS_REVIEW');
+    assert.ok(r.reason.startsWith('attr_label_conflict'));
+  });
+  test('attrConflictGuard: consistent attribute + label still fills normally', () => {
+    const f = field({ input_type: 'text', label_text: 'First Name', attributes: { name: 'firstName', id: 'firstName' } });
+    const r = Matcher.matchField(f, defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Emily');
+  });
+
+  test('setNativeValue on a non-Input/TextArea custom widget never throws "Illegal invocation"', () => {
+    // Live bug: SuccessFactors renders some comboboxes as non-<input>
+    // elements; calling HTMLInputElement.prototype's setter on them threw.
+    const events = [];
+    const customWidget = {
+      _value: '',
+      get value() { return this._value; },
+      set value(v) { this._value = v; },
+      addEventListener(type, fn) {
+        this._listeners = this._listeners || {};
+        (this._listeners[type] = this._listeners[type] || []).push(fn);
+      },
+      dispatchEvent(evt) {
+        events.push(evt.type);
+        ((this._listeners || {})[evt.type] || []).forEach((fn) => fn(evt));
+        return true;
+      },
+    };
+    assert.doesNotThrow(() => Filler.setNativeValue(customWidget, 'English'));
+    assert.strictEqual(customWidget.value, 'English');
+    assert.ok(events.includes('input') && events.includes('change'));
+  });
+
+  test('"State/Province" (slash form) resolves to identity.state', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'State/Province', context_text: 'Addresses (1)', options: ['No Selection', 'Virginia', 'Maryland'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Virginia');
+  });
+  test('"Country/Region" resolves to identity.country', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Country/Region', context_text: 'Addresses (1)', options: ['— Make a Selection —', 'United States', 'Canada'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'United States');
+  });
+
+  test('"Address Line 2" -> SKIPPED_OPTIONAL, not review-queue noise', () => {
+    const r = Matcher.matchField(field({ label_text: 'Address Line 2' }), defaultBank, {});
+    assert.strictEqual(r.status, 'SKIPPED_OPTIONAL');
+  });
+  test('"Legal Middle Name" -> SKIPPED_OPTIONAL', () => {
+    const r = Matcher.matchField(field({ label_text: 'Legal Middle Name' }), defaultBank, {});
+    assert.strictEqual(r.status, 'SKIPPED_OPTIONAL');
+  });
+  test('conditional "If Yes Which Country..." follow-up -> SKIPPED_OPTIONAL', () => {
+    const r = Matcher.matchField(field({ input_type: 'select', label_text: 'If Yes Which Country Were You Last Assigned to?' }), defaultBank, {});
+    assert.strictEqual(r.status, 'SKIPPED_OPTIONAL');
+  });
+
+  test('Prefix select with real salutation options -> Ms.', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Prefix', options: ['No Selection', 'Mr.', 'Ms.', 'Mrs.', 'Dr.'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Ms.');
+  });
+  test('Prefix select with non-salutation options is left alone (Title vs. Prefix collision guard)', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Prefix', options: ['No Selection', 'Manager', 'Director'] }),
+      defaultBank,
+      {}
+    );
+    assert.notStrictEqual(r.bankKey, 'identity.prefix');
+  });
+
+  test('"Are you an EY Alumni?" -> logistics.worked_here_before -> No', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Are you an EY Alumni?', options: ['No Selection', 'Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'No');
+  });
+
+  test('resume rule gated to file inputs — a "Language" select must never match it', () => {
+    // Live bug: page prose ("Please note that uploading a resume/CV...")
+    // leaked into context_text and matched two unrelated Language selects.
+    const r = Matcher.matchField(
+      field({
+        input_type: 'select',
+        label_text: 'Language',
+        context_text: 'Please note that uploading a resume/CV is optional. Accepted file types include DOCX, PDF.',
+        options: ['English', 'Spanish'],
+      }),
+      defaultBank,
+      {}
+    );
+    assert.notStrictEqual(r.bankKey, 'documents.resume_filename');
+  });
+  test('cover-letter file field is not swept into the resume rule', () => {
+    const r = Matcher.matchField(field({ input_type: 'file', label_text: 'Cover letter' }), defaultBank, {});
+    assert.notStrictEqual(r.bankKey, 'documents.resume_filename');
+  });
+
+  test('$-bucketed compensation range: 95000 -> "$90,001-$100,000"', () => {
+    const options = ['$30,000-$40,000', '$40,001-$50,000', '$90,001-$100,000', '$100,001-$110,000', '$201,000+', 'prefer not to answer'];
+    assert.strictEqual(OptionMatcher.matchRangeBucket(95000, options), '$90,001-$100,000');
+  });
+  test('EY-style compensation-range question fills the correct $ bucket end to end', () => {
+    const options = ['$30,000-$40,000', '$40,001-$50,000', '$90,001-$100,000', '$100,001-$110,000', '$201,000+', 'prefer not to answer'];
+    const r = Matcher.matchField(
+      field({
+        input_type: 'radio_group',
+        label_text: 'In applying for this position, please select the range that most closely represents your desired total compensation.',
+        options,
+      }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, '$90,001-$100,000');
+  });
+  test('numeric-string bank values ("95000") get range-bucket treatment, not just real numbers', () => {
+    const bank = freshBank({ compensation: Object.assign({}, defaultBank.compensation, { desired_salary_annual: '95000' }) });
+    const options = ['$30,000-$40,000', '$90,001-$100,000', '$201,000+'];
+    const r = Matcher.matchField(field({ input_type: 'select', label_text: 'Desired salary', options }), bank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, '$90,001-$100,000');
+  });
+}
+
 console.log('\n=== Spec §11#10 invariant: no submit/auto-advance code paths ===');
 {
   test('no handler targets [type=submit] and no .submit()/.click() on submit controls', () => {
