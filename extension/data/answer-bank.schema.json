@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Autofill Answer Bank",
+  "type": "object",
+  "required": ["identity", "education", "immigration_status", "experience", "skills_yoe", "clearance", "federal", "compensation", "logistics", "eeo", "stock_answers", "documents"],
+  "properties": {
+    "identity": {
+      "type": "object",
+      "required": ["first_name", "last_name", "full_name", "email"],
+      "properties": {
+        "first_name": { "type": "string" },
+        "last_name": { "type": "string" },
+        "full_name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "phone_formatted": { "type": "string" },
+        "address_line1": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "state_abbr": { "type": "string" },
+        "zip": { "type": "string" },
+        "country": { "type": "string" },
+        "linkedin": { "type": "string" },
+        "portfolio": { "type": "string" },
+        "github": { "type": "string" },
+        "how_heard": { "type": "string" },
+        "preferred_name": { "type": "string" },
+        "pronouns": { "type": "string" }
+      }
+    },
+    "education": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["school", "degree", "degree_level", "field"],
+        "properties": {
+          "school": { "type": "string" },
+          "degree": { "type": "string" },
+          "degree_short": { "type": "string" },
+          "degree_level": { "type": "string" },
+          "field": { "type": "string" },
+          "gpa": { "type": "string" },
+          "start": { "type": "string" },
+          "end": { "type": "string" },
+          "graduated": { "type": "boolean" },
+          "city": { "type": "string" },
+          "state": { "type": "string" },
+          "country": { "type": "string" }
+        }
+      }
+    },
+    "highest_education": { "type": "string" },
+    "immigration_status": {
+      "type": "string",
+      "enum": ["f1_opt", "permanent_resident", "citizen", ""]
+    },
+    "experience": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "company", "start"],
+        "properties": {
+          "title": { "type": "string" },
+          "company": { "type": "string" },
+          "location_city": { "type": "string" },
+          "location_state": { "type": "string" },
+          "country": { "type": "string" },
+          "start": { "type": "string" },
+          "end": { "type": "string" },
+          "current": { "type": "boolean" },
+          "summary": { "type": "string" },
+          "include_policy": { "type": "string" }
+        }
+      }
+    },
+    "total_professional_years": { "type": "string" },
+    "skills_yoe": { "type": "object" },
+    "skills_flat_list": { "type": "string" },
+    "certifications": { "type": "string" },
+    "clearance": {
+      "type": "object",
+      "properties": {
+        "has_clearance": { "type": "string" },
+        "clearance_level": { "type": "string" },
+        "willing_to_obtain": { "type": "string" },
+        "held_clearance_past": { "type": "string" }
+      }
+    },
+    "federal": {
+      "type": "object",
+      "properties": {
+        "current_federal_employee": { "type": "string" },
+        "former_federal_employee": { "type": "string" },
+        "special_hiring_authority": { "type": "string" }
+      }
+    },
+    "compensation": {
+      "type": "object",
+      "properties": {
+        "desired_salary_annual": { "type": "string" },
+        "salary_answer_text": { "type": "string" },
+        "salary_min": { "type": "string" },
+        "salary_max": { "type": "string" },
+        "hourly_ok": { "type": "boolean" }
+      }
+    },
+    "logistics": {
+      "type": "object",
+      "properties": {
+        "available_start": { "type": "string" },
+        "willing_to_relocate": { "type": "string" },
+        "remote_hybrid_onsite": { "type": "string" },
+        "commutable_note": { "type": "string" },
+        "over_18": { "type": "string" },
+        "worked_here_before": { "type": "string" },
+        "relatives_at_company": { "type": "string" },
+        "non_compete": { "type": "string" },
+        "background_check_consent": { "type": "string" },
+        "drug_test_consent": { "type": "string" },
+        "criminal_record": { "type": "string" },
+        "military_veteran_service": { "type": "string" }
+      }
+    },
+    "eeo": {
+      "type": "object",
+      "properties": {
+        "gender": { "type": "string" },
+        "race_ethnicity": { "type": "string" },
+        "hispanic_latino": { "type": "string" },
+        "veteran_status": { "type": "string" },
+        "disability_status": { "type": "string" }
+      }
+    },
+    "stock_answers": {
+      "type": "object",
+      "properties": {
+        "why_this_company": { "type": "object" },
+        "why_this_role": { "type": "object" },
+        "anything_else": { "type": "string" }
+      }
+    },
+    "documents": {
+      "type": "object",
+      "properties": {
+        "resume_filename": { "type": "string" },
+        "cover_letter_policy": { "type": "string" }
+      }
+    }
+  }
+}

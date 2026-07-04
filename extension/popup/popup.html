@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Autofill</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Job Application Autofill</h1>
+        <p class="subtitle">Emily Terry — review-always, never auto-submits</p>
+      </header>
+
+      <div id="bank-status" class="status-row"></div>
+      <div id="preset-status" class="status-row"></div>
+
+      <button id="fill-btn" class="primary">Fill this page</button>
+      <p class="hint">or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></p>
+
+      <div id="result" class="result"></div>
+
+      <footer>
+        <a href="#" id="open-options">Options</a>
+        <span class="dot">·</span>
+        <span>Never auto-submits</span>
+      </footer>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>
