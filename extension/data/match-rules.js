@@ -109,6 +109,39 @@
   const EXPERIENCE_CONTEXT_RE = /(professional|work|employment) (experience|history)|employment record|previous employer/;
   const EDUCATION_CONTEXT_RE = /education|academic|school history/;
 
+  // Minimal local normalizer (match-rules must not depend on lib load order
+  // in Node): lowercase, punctuation -> space, collapse whitespace.
+  function norm(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  // Tokens too generic to identify an employer on their own ("American
+  // University" must not make "American Express" read as a past employer).
+  const GENERIC_COMPANY_TOKENS = new Set([
+    'american', 'international', 'university', 'industries', 'inc', 'llc', 'ltd',
+    'corp', 'corporation', 'company', 'co', 'group', 'global', 'national', 'the',
+    'of', 'and', 'services', 'solutions', 'systems', 'technologies',
+  ]);
+
+  /**
+   * Resume-aware "have you worked for X before?" answering: Yes when the
+   * question names an employer that appears in the bank's experience
+   * history, No otherwise (including the generic "worked here before"
+   * phrasing — "here" is the hiring company, which by definition isn't in
+   * the resume or she'd be an internal applicant using their portal).
+   */
+  function workedForFromResume(hay, bank) {
+    const companies = ((bank && bank.experience) || []).map((x) => norm(x.company)).filter(Boolean);
+    for (const company of companies) {
+      if (company && hay.includes(company)) return '__literal:Yes';
+      // Distinctive-single-token fallback: "worked at Koch?" should still
+      // hit "Koch Industries", but never via a generic token alone.
+      const distinctive = company.split(' ').filter((t) => t.length > 3 && !GENERIC_COMPANY_TOKENS.has(t));
+      if (distinctive.some((t) => new RegExp(`\\b${t}\\b`).test(hay))) return '__literal:Yes';
+    }
+    return '__literal:No';
+  }
+
   const TIER2_RULES = [
     // --- Account creation / credentials: never autofill, always flag.
     // iCIMS candidate-profile pages open with a "Create a login" section;
@@ -120,7 +153,10 @@
     { name: 'middle_name', test: /middle (name|initial)/, special: 'skip_optional' },
     { name: 'second_or_maiden_name', test: /(second|maiden|mother'?s|father'?s) (last )?name/, special: 'skip_optional' },
     { name: 'address_line2', test: /address (line )?2|apartment|apt\.?\b|suite|unit number/, special: 'skip_optional' },
-    { name: 'conditional_followup', test: /^if (yes|no|applicable)\b/, special: 'skip_optional' },
+    { name: 'conditional_followup', test: /^if (you )?(answered |answering )?["']?(yes|no|applicable)\b/, special: 'skip_optional' },
+
+    // Legal/ethics attestations — never auto-answered, never AI territory.
+    { name: 'conflict_of_interest', test: /conflict of interest|bribery|corruption|government official|politically exposed/, special: 'always_review' },
 
     // --- Salutation prefix: only when the options actually look like
     // salutations (Prefix/Title collide with job-title otherwise) ---
@@ -247,6 +283,7 @@
     // --- Location variants ---
     { name: 'relocate', test: /(willing|open).{0,20}relocat|relocation/, key: 'logistics.willing_to_relocate' },
     { name: 'work_setting', test: /(authorized|able).{0,15}work (on.?site|in office|hybrid)|remote.{0,10}(hybrid|onsite|in.?office)|work (arrangement|location) preference/, key: 'logistics.remote_hybrid_onsite' },
+    { name: 'willing_office', test: /(willing|able) to work (from|at|in).{0,25}office/, key: '__literal:Yes' },
     { name: 'commute', test: /commut/, key: 'logistics.commutable_note' },
     { name: 'current_location', test: /current(ly)?.{0,15}(located|residing|live)/, key: 'identity.city' },
 
@@ -269,12 +306,13 @@
     { name: 'email', test: /e-?mail/, key: 'identity.email' },
     { name: 'phone', test: /phone|mobile number|telephone/, key: 'identity.phone_formatted' },
     { name: 'linkedin', test: /linkedin/, key: 'identity.linkedin' },
-    { name: 'portfolio', test: /portfolio|personal website/, key: 'identity.portfolio' },
+    { name: 'portfolio', test: /portfolio|personal website|^website$/, key: 'identity.portfolio' },
     { name: 'github', test: /github/, key: 'identity.github' },
     { name: 'address', test: /street address|address line ?1|^address 1$|^address$/, key: 'identity.address_line1' },
     {
+      // Greenhouse's new board labels the city field "Location (City)".
       name: 'city',
-      test: /^city$|town/,
+      test: /^city$|town|^location( city)?$|location city|current location/,
       resolve(hay) {
         return EXPERIENCE_CONTEXT_RE.test(hay) ? 'experience.0.location_city' : 'identity.city';
       },
@@ -311,11 +349,17 @@
     // (two "Language" selects on a live EY run). Cover letters are skipped
     // per documents.cover_letter_policy. ---
     {
+      // Also matches bare "Attach"/"Upload"/"Choose file" labels: hidden
+      // file inputs behind styled buttons (Greenhouse's new board) often
+      // surface only the button text as their label. Still file-input-only
+      // and cover-letter-excluded; content-main additionally attaches the
+      // resume to at most ONE file input per page (first in DOM order) and
+      // flags the rest.
       name: 'resume_upload',
-      test: /r[ée]sum[ée]|^cv$|curriculum vitae/,
+      test: /r[ée]sum[ée]|^cv$|curriculum vitae|^attach\b|^upload\b|choose file/,
       resolve(hay, field) {
         if (!field || field.input_type !== 'file') return null;
-        if (/cover letter/.test(hay)) return null;
+        if (/cover letter|transcript|portfolio sample/.test(hay)) return null;
         return 'documents.resume_filename';
       },
     },
@@ -330,7 +374,16 @@
 
     // --- Consents / logistics booleans ---
     { name: 'over_18', test: /(are you )?(at least )?18 years/, key: 'logistics.over_18' },
-    { name: 'worked_here_before', test: /(previously|ever) (worked|employed) (here|at|for) (this company|us)/, key: 'logistics.worked_here_before' },
+    {
+      // "Have you ever worked for Robinhood..." / "worked here before?" —
+      // answered from the resume's actual employer list (owner request),
+      // not a fixed No. See workedForFromResume().
+      name: 'worked_here_before',
+      test: /have you (ever|previously) (worked|been employed)|(previously|ever) (worked|employed) (here|at|for)/,
+      resolve(hay, field, bank) {
+        return workedForFromResume(hay, bank);
+      },
+    },
     { name: 'relatives', test: /(relative|family member).{0,20}(work|employ)/, key: 'logistics.relatives_at_company' },
     { name: 'non_compete', test: /non-?compete/, key: 'logistics.non_compete' },
     { name: 'background_check', test: /background check/, key: 'logistics.background_check_consent' },
@@ -342,9 +395,10 @@
     { name: 'eeo_gender', test: /^gender$|gender identity|what is your gender/, key: 'eeo.gender' },
     { name: 'eeo_race', test: /race\/?ethnicity|race or ethnicity|^race$|^ethnicity$/, key: 'eeo.race_ethnicity' },
     { name: 'eeo_hispanic', test: /hispanic or latino/, key: 'eeo.hispanic_latino' },
-    { name: 'eeo_veteran', test: /veteran status|protected veteran/, key: 'eeo.veteran_status' },
+    { name: 'eeo_veteran', test: /veteran status|protected veteran|military status/, key: 'eeo.veteran_status' },
+    { name: 'eeo_lgbtq', test: /lgbtq/, key: 'eeo.lgbtq_identify' },
     { name: 'eeo_disability', test: /disability status|do you have a disability|^disability\b/, key: 'eeo.disability_status' },
-    { name: 'eeo_pronouns', test: /preferred pronouns|^pronouns$/, key: 'identity.pronouns' },
+    { name: 'eeo_pronouns', test: /preferred pronouns|^pronouns$|gender pronouns|pronouns (do )?you (prefer|use)/, key: 'identity.pronouns' },
 
     // --- Stock free-text (always NEEDS_REVIEW per bank) ---
     { name: 'why_company', test: /why (do you want to work|are you interested in working).{0,20}(at|for)|why this company/, key: 'stock_answers.why_this_company.mode' },

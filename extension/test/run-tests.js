@@ -771,6 +771,122 @@ console.log('\n=== Live-run regressions (EY/SuccessFactors + Nüvitek/Pinpoint) 
   });
 }
 
+console.log('\n=== Live-run regressions (Robinhood / Greenhouse new board) ===');
+{
+  test('"Have you ever worked for Robinhood..." -> No (not in resume)', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Have you ever worked for Robinhood as an employee or contractor of Robinhood?', options: ['Select...', 'Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'No');
+  });
+  test('"Have you ever worked for Koch Industries?" -> Yes (in resume)', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Have you ever worked for Koch Industries?', options: ['Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Yes');
+  });
+  test('single distinctive token: "worked at Koch before?" -> Yes', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'radio_group', label_text: 'Have you ever worked at Koch before?', options: ['Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Yes');
+  });
+  test('generic token never triggers a false Yes: "worked for American Express?" -> No', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'radio_group', label_text: 'Have you ever worked for American Express?', options: ['Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'No');
+  });
+  test('"American University" as a full phrase still hits: -> Yes', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'radio_group', label_text: 'Have you previously worked at American University?', options: ['Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Yes');
+  });
+
+  test('"Location (City)" -> identity.city', () => {
+    const r = Matcher.matchField(field({ label_text: 'Location (City)' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Vienna');
+  });
+  test('"Website" -> identity.portfolio', () => {
+    const r = Matcher.matchField(field({ label_text: 'Website' }), defaultBank, {});
+    assert.strictEqual(r.bankKey, 'identity.portfolio');
+  });
+  test('"What gender pronouns do you prefer?" -> identity.pronouns', () => {
+    const r = Matcher.matchField(field({ input_type: 'select', label_text: 'What gender pronouns do you prefer?', options: ['She/Her', 'He/Him', 'They/Them', "I don't wish to answer"] }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'She/Her');
+  });
+  test('"What is your military status?" -> eeo.veteran_status', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'What is your military status?', options: ['I am not a protected veteran', 'I identify as one or more of the classifications of a protected veteran', "I don't wish to answer"] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'I am not a protected veteran');
+  });
+  test('LGBTQ+ question -> decline via synonym bag', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Do you identify as part of the LGBTQ+ community?', options: ['Yes', 'No', 'I prefer not to say'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'I prefer not to say');
+  });
+  test('"Are you willing to work from the office(s) listed?" -> Yes', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Are you willing to work from the office(s) listed on this posting?', options: ['Select...', 'Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Yes');
+  });
+  test('conflict-of-interest / bribery attestations -> always NEEDS_REVIEW', () => {
+    const coi = Matcher.matchField(field({ input_type: 'select', label_text: 'Do you have any relationships that present a conflict of interest?', options: ['Yes', 'No'] }), defaultBank, {});
+    assert.strictEqual(coi.status, 'NEEDS_REVIEW');
+    const bribery = Matcher.matchField(field({ input_type: 'select', label_text: 'Have you held a position as a government official in the last 5 years?', options: ['Yes', 'No'] }), defaultBank, {});
+    assert.strictEqual(bribery.status, 'NEEDS_REVIEW');
+  });
+  test('"If you answered \'Yes\' to the above question..." -> SKIPPED_OPTIONAL', () => {
+    const r = Matcher.matchField(field({ input_type: 'textarea', label_text: 'If you answered "Yes" to the above question, please provide details here:' }), defaultBank, {});
+    assert.strictEqual(r.status, 'SKIPPED_OPTIONAL');
+  });
+  test('bare "Attach" label on a hidden file input -> resume', () => {
+    const r = Matcher.matchField(field({ input_type: 'file', label_text: 'Attach' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.bankKey, 'documents.resume_filename');
+  });
+  test('bare "Attach" on a NON-file element never matches resume', () => {
+    const r = Matcher.matchField(field({ input_type: 'text', label_text: 'Attach' }), defaultBank, {});
+    assert.notStrictEqual(r.bankKey, 'documents.resume_filename');
+  });
+
+  test('phone verification tolerates widget reformatting (digits-equal)', () => {
+    const Filler = require('../content/filler.js');
+    // Widget stripped our formatting: still equivalent.
+    assert.strictEqual(Filler.valuesEquivalent('7179034428', '(717) 903-4428'), true);
+    // Widget added formatting to our bare digits: still equivalent.
+    assert.strictEqual(Filler.valuesEquivalent('(717) 903-4428', '7179034428'), true);
+    // Different numbers: never equivalent.
+    assert.strictEqual(Filler.valuesEquivalent('7179034429', '(717) 903-4428'), false);
+    // Non-phone text still requires exact equality.
+    assert.strictEqual(Filler.valuesEquivalent('Emily ', 'Emily'), false);
+  });
+}
+
 console.log('\n=== Spec §11#10 invariant: no submit/auto-advance code paths ===');
 {
   test('no handler targets [type=submit] and no .submit()/.click() on submit controls', () => {

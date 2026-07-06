@@ -55,19 +55,44 @@
     ['input', 'change', 'blur'].forEach((t) => el.dispatchEvent(new Event(t, { bubbles: true })));
   }
 
+  /**
+   * Loose equality for widget-reformatted values: phone inputs strip or add
+   * formatting ("(717) 903-4428" -> "7179034428"), so exact comparison
+   * false-alarms even though the value landed (observed live on a
+   * Greenhouse phone field, reported FAILED with the number visibly there).
+   * When both sides are phone-shaped, compare digits only.
+   */
+  function valuesEquivalent(actual, expected) {
+    if (actual === expected) return true;
+    const phoneish = /^[\d\s()+.\-]+$/;
+    if (phoneish.test(String(expected)) && phoneish.test(String(actual))) {
+      const digits = (s) => String(s).replace(/\D/g, '');
+      const de = digits(expected);
+      return de.length > 0 && digits(actual) === de;
+    }
+    return false;
+  }
+
   async function setValueWithKeystrokeFallback(el, value) {
     el.focus();
     setNativeValue(el, value);
     await sleep(30);
-    if (el.value === value) return true;
+    if (valuesEquivalent(el.value, value)) return true;
 
     // Retry once with simulated per-character keystrokes for stubborn
-    // controlled inputs that ignore programmatic value assignment.
+    // controlled inputs that ignore programmatic value assignment. Uses the
+    // same guarded write as setNativeValue — the raw prototype setter throws
+    // "Illegal invocation" on custom (non-input) widgets.
     setNativeValue(el, '');
+    const isRealInput = (typeof HTMLInputElement !== 'undefined' && el instanceof HTMLInputElement) ||
+      (typeof HTMLTextAreaElement !== 'undefined' && el instanceof HTMLTextAreaElement);
     for (const ch of String(value)) {
-      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-      descriptor.set.call(el, el.value + ch);
+      if (isRealInput) {
+        const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, el.value + ch);
+      } else {
+        el.value = (el.value || '') + ch;
+      }
       el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
@@ -75,7 +100,7 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.dispatchEvent(new Event('blur', { bubbles: true }));
     await sleep(30);
-    return el.value === value;
+    return valuesEquivalent(el.value, value);
   }
 
   // ---------------------------------------------------------------------
@@ -108,6 +133,18 @@
       if (isVisibleLocal(c) && c.querySelectorAll('[role="option"]').length > 0) return c;
     }
     return null;
+  }
+
+  /** Full mouse-interaction sequence — some widgets only listen to mousedown. */
+  function openWithMouse(el) {
+    const opts = { bubbles: true, cancelable: true, view: window };
+    try {
+      el.dispatchEvent(new MouseEvent('mousedown', opts));
+      el.dispatchEvent(new MouseEvent('mouseup', opts));
+      el.dispatchEvent(new MouseEvent('click', opts));
+    } catch (e) {
+      if (typeof el.click === 'function') el.click();
+    }
   }
 
   function isVisibleLocal(el) {
@@ -166,7 +203,7 @@
 
     async select(field, el, value) {
       if (field.ui_pattern === 'button_listbox' || el.tagName.toLowerCase() === 'button') {
-        el.click();
+        openWithMouse(el);
         const listbox = await pollUntil(() => findListbox(el), 1500);
         if (!listbox) return { ok: false, note: 'listbox_did_not_open' };
         const optionEls = Array.from(listbox.querySelectorAll('[role="option"]'));
@@ -257,8 +294,17 @@
       if (!listbox) {
         // Click-to-open combobox (SuccessFactors EEO selects open on click,
         // not on typing — typing alone produced "no_listbox_appeared" live).
-        el.click();
+        openWithMouse(el);
         listbox = await pollUntil(() => findListbox(el), 1200);
+      }
+
+      if (!listbox && el.parentElement) {
+        // react-select (Greenhouse's new board) binds mousedown on the
+        // styled control WRAPPER, not the inner input — clicking the input
+        // itself never opens the menu (observed live on every select of a
+        // Robinhood application).
+        openWithMouse(el.parentElement);
+        listbox = await pollUntil(() => findListbox(el), 1500);
       }
 
       if (!listbox) {
@@ -420,7 +466,7 @@
     return outcomes;
   }
 
-  const Filler = { fillField, fillSequential, setNativeValue, verifyField };
+  const Filler = { fillField, fillSequential, setNativeValue, verifyField, valuesEquivalent };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = Filler;

@@ -31,6 +31,11 @@
   let lastFillSnapshot = []; // for "Clear all fills" (per frame)
   let localFieldsById = new Map(); // field_id -> field (per frame, for pulse)
   let mergedRecords = new Map(); // top frame only: `${frameKey}:${field_id}` -> record
+  // Elements WE filled in an earlier pass of this session. Later passes see
+  // them as "already has a value" and would report SKIPPED_PREFILLED; this
+  // set lets buildOutcomeRecord report them as FILLED instead, so the panel
+  // reflects reality after runFillCycle's multi-pass flow.
+  const filledByUs = new WeakSet();
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -139,13 +144,16 @@
    * single panel status. A low-confidence match that filled successfully
    * must stay visible as a warning, not get promoted to a clean FILLED.
    */
-  function combinedStatus(matchResult, fillOutcome) {
+  function combinedStatus(matchResult, fillOutcome, field) {
     if (!fillOutcome) return matchResult.status;
     if (fillOutcome.outcome === 'FILLED' && matchResult.status === 'FILL_LOW_CONFIDENCE') {
       return 'FILLED_LOW_CONFIDENCE';
     }
     if (fillOutcome.outcome === 'FILLED' && matchResult.status === 'FILL_AI_DRAFT') {
       return 'FILLED_AI_DRAFT';
+    }
+    if (fillOutcome.outcome === 'SKIPPED_PREFILLED' && field && field.__elements && filledByUs.has(field.__elements[0])) {
+      return 'FILLED'; // our own earlier-pass fill, not a pre-existing value
     }
     return fillOutcome.outcome;
   }
@@ -158,7 +166,7 @@
       value: matchResult.value,
       lockIcon: !!matchResult.lockIcon,
       aiGenerated: !!matchResult.aiGenerated,
-      status: combinedStatus(matchResult, fillOutcome),
+      status: combinedStatus(matchResult, fillOutcome, field),
       note: (fillOutcome && fillOutcome.note) || matchResult.reason || undefined,
     };
   }
@@ -232,6 +240,19 @@
       if (next) r.match = next;
     }
 
+    // One resume per page: multiple hidden upload inputs (resume + cover
+    // letter + "additional documents") can all look resume-shaped; only the
+    // FIRST in DOM order gets the attachment, the rest are flagged.
+    let resumeTargetSeen = false;
+    for (const r of results) {
+      if (r.match.bankKey === 'documents.resume_filename' && (r.match.status === 'FILL' || r.match.status === 'FILL_LOW_CONFIDENCE')) {
+        if (resumeTargetSeen) {
+          r.match = Object.assign({}, r.match, { status: 'NEEDS_REVIEW', value: null, reason: 'additional_upload_field' });
+        }
+        resumeTargetSeen = true;
+      }
+    }
+
     const toFill = results.filter((r) => ['FILL', 'FILL_LOW_CONFIDENCE', 'FILL_AI_DRAFT'].includes(r.match.status));
     const snapshot = toFill.map((r) => ({ field: r.field, originalValue: r.field.current_value }));
 
@@ -241,6 +262,12 @@
     fillOutcomes.forEach((o) => {
       fillOutcomeById[o.field_id] = o;
     });
+    for (const r of toFill) {
+      const outcome = fillOutcomeById[r.field.id];
+      if (outcome && (outcome.outcome === 'FILLED' || outcome.outcome === 'FILLED_UNVERIFIED') && r.field.__elements) {
+        filledByUs.add(r.field.__elements[0]);
+      }
+    }
 
     lastFillSnapshot = lastFillSnapshot.concat(snapshot);
 
@@ -308,6 +335,15 @@
   }
 
   function mergeRecords(frameKey, records) {
+    // REPLACE this frame's records rather than accumulate: field ids are
+    // regenerated on every detection pass, so runFillCycle's multi-pass flow
+    // (local pass -> expansion refills -> AI pass) otherwise stacks 2-3
+    // stale copies of every field — a live Robinhood/Greenhouse run showed
+    // "70 need review" that was mostly triplicates. The latest pass is a
+    // complete snapshot of the frame, so it supersedes everything prior.
+    for (const key of [...mergedRecords.keys()]) {
+      if (key.startsWith(`${frameKey}:`)) mergedRecords.delete(key);
+    }
     for (const r of records) {
       mergedRecords.set(`${frameKey}:${r.field_id}`, Object.assign({}, r, { __frameKey: frameKey }));
     }
