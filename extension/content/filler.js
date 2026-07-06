@@ -356,12 +356,17 @@
       if (!(el && el.tagName === 'INPUT' && el.getAttribute('type') === 'file')) {
         return { ok: false, note: 'attach_manually_custom_widget' };
       }
-      if (typeof chrome === 'undefined' || !chrome.storage) {
-        return { ok: false, note: 'attach_manually' };
+      // Per-field payload override (AI-drafted cover letter) beats the
+      // stored resume; the resume remains the default for plain file fields.
+      let stored = field.__attachOverride || null;
+      if (!stored) {
+        if (typeof chrome === 'undefined' || !chrome.storage) {
+          return { ok: false, note: 'attach_manually' };
+        }
+        stored = await new Promise((resolve) => {
+          chrome.storage.local.get(['resumeFile'], (data) => resolve(data.resumeFile || null));
+        });
       }
-      const stored = await new Promise((resolve) => {
-        chrome.storage.local.get(['resumeFile'], (data) => resolve(data.resumeFile || null));
-      });
       if (!stored || !stored.base64) {
         return { ok: false, note: 'attach_manually_no_resume_stored' };
       }

@@ -312,6 +312,21 @@
 
   els.saveBtn.addEventListener('click', save);
 
+  document.getElementById('test-api-btn').addEventListener('click', () => {
+    const out = document.getElementById('test-api-result');
+    out.textContent = 'Testing… (save first if you just pasted the key)';
+    out.className = 'validation';
+    chrome.runtime.sendMessage({ type: 'TEST_API_KEY' }, (resp) => {
+      if (chrome.runtime.lastError || !resp) {
+        out.textContent = 'No response from background worker.';
+        out.className = 'validation error';
+        return;
+      }
+      out.textContent = resp.ok ? '✓ Key works.' : '✗ ' + resp.error;
+      out.className = resp.ok ? 'validation ok' : 'validation error';
+    });
+  });
+
   els.exportBtn.addEventListener('click', () => {
     collectQuickFieldsIntoBank();
     const blob = new Blob([JSON.stringify(bank, null, 2)], { type: 'application/json' });

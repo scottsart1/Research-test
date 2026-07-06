@@ -167,6 +167,6 @@
   },
   "documents": {
     "resume_filename": "Resume_Emily_Terry.pdf",
-    "cover_letter_policy": "skip_unless_required"
+    "cover_letter_policy": "ai_draft_and_attach"
   }
 }
