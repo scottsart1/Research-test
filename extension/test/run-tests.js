@@ -887,6 +887,35 @@ console.log('\n=== Live-run regressions (Robinhood / Greenhouse new board) ===')
   });
 }
 
+console.log('\n=== Live-run regressions (Robinhood recording): gender synonyms ===');
+{
+  test('bank "Female" selects "Woman" when that is the offered option', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'What is your gender identity?', options: ['Man', 'Woman', 'Non-binary', "I don't wish to answer"] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Woman');
+  });
+  test('bank "Female" still prefers a literal "Female" option when present', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Gender', options: ['Male', 'Female', 'Decline to self-identify'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Female');
+  });
+  test('no gender-shaped option at all -> NEEDS_REVIEW, never a guess', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'What is your gender identity?', options: ['Alpha', 'Beta'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'NEEDS_REVIEW');
+  });
+}
+
 console.log('\n=== Spec §11#10 invariant: no submit/auto-advance code paths ===');
 {
   test('no handler targets [type=submit] and no .submit()/.click() on submit controls', () => {

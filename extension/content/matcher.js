@@ -122,6 +122,14 @@
     }
 
     let matched = OptionMatcher.matchOption(String(raw), options);
+    if (!matched && bankKey === 'eeo.gender') {
+      // Forms phrase gender options differently ("Woman" vs "Female" —
+      // observed live on a Greenhouse EEO section, where "Female" was left
+      // half-typed in the combobox because nothing matched).
+      const GENDER_SYNONYMS = { female: 'woman', woman: 'female', male: 'man', man: 'male' };
+      const alt = GENDER_SYNONYMS[Fuzzy.normalize(raw)];
+      if (alt) matched = OptionMatcher.matchOption(alt, options);
+    }
     if (!matched && bankKey.startsWith('eeo.') && EeoStrings.isDeclineOption(raw)) {
       matched = options.find((o) => EeoStrings.isDeclineOption(o)) || null;
     }

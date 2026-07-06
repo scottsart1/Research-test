@@ -135,6 +135,24 @@
     return null;
   }
 
+  /**
+   * Never leave half-typed text in a combobox (spec §6 / §11#2). One plain
+   * clear proved insufficient live — a controlled widget re-rendered our
+   * typed text back ("Female" left visible in a Greenhouse gender field).
+   * Escape first (most comboboxes clear + close on it), then clear, verify,
+   * and retry once before giving up.
+   */
+  async function clearTypeaheadResidue(el) {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', bubbles: true }));
+    await sleep(60);
+    for (let attempt = 0; attempt < 2 && el.value; attempt++) {
+      setNativeValue(el, '');
+      await sleep(120);
+    }
+    document.body.click(); // close any popup left open
+  }
+
   /** Full mouse-interaction sequence — some widgets only listen to mousedown. */
   function openWithMouse(el) {
     const opts = { bubbles: true, cancelable: true, view: window };
@@ -214,7 +232,7 @@
           return { ok: false, note: 'no_matching_live_option' };
         }
         optionEls[idx].click();
-        await sleep(20);
+        await sleep(150); // let the widget commit before the next field
         return { ok: true };
       }
       // Native <select>. Dependent selects (State only populates after
@@ -324,12 +342,11 @@
       const OptionMatcher = root.OptionMatcher;
       const matched = OptionMatcher ? OptionMatcher.matchOption(String(value), labels) : labels.find((l) => l === value);
       if (!matched) {
-        setNativeValue(el, '');
-        document.body.click(); // close the popup without selecting
+        await clearTypeaheadResidue(el);
         return { ok: false, note: 'no_matching_option_typed' };
       }
       optionEls[labels.indexOf(matched)].click();
-      await sleep(20);
+      await sleep(150); // let the widget commit the selection before the next field
       return { ok: true };
     },
 

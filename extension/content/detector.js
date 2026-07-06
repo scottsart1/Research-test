@@ -382,7 +382,64 @@
       });
     }
 
-    return fields;
+    return dedupeCompositeWidgets(fields);
+  }
+
+  // ---------------------------------------------------------------------
+  // Composite-widget dedupe: styled selects (Greenhouse's board,
+  // react-select and kin) render MULTIPLE focusable elements for one visual
+  // control — a wrapper button plus an inner combobox input. Detecting both
+  // produced two records per question (a live Robinhood run showed every
+  // work-auth question 2-4x in the panel) and two fill attempts fighting
+  // each other. When two option-style fields share the same label AND a
+  // close common ancestor, keep the most fillable one (typeahead input >
+  // select > anything else) and drop the rest silently.
+  // ---------------------------------------------------------------------
+
+  function ancestorSet(el, depth) {
+    const set = new Set();
+    let node = el;
+    for (let i = 0; node && i < depth; i++) {
+      set.add(node);
+      node = node.parentElement;
+    }
+    return set;
+  }
+
+  function sharesContainer(fieldA, fieldB) {
+    const a = fieldA.__elements && fieldA.__elements[0];
+    const b = fieldB.__elements && fieldB.__elements[0];
+    if (!a || !b) return false;
+    const ancestors = ancestorSet(a, 5);
+    let node = b;
+    for (let i = 0; node && i < 5; i++) {
+      if (ancestors.has(node)) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  const WIDGET_RANK = { typeahead: 3, select: 2 };
+
+  function dedupeCompositeWidgets(fields) {
+    const OPTIONISH = new Set(['typeahead', 'select']);
+    const kept = [];
+    for (const f of fields) {
+      const label = (f.label_text || '').trim().toLowerCase();
+      if (!label || !OPTIONISH.has(f.input_type)) {
+        kept.push(f);
+        continue;
+      }
+      const twinIndex = kept.findIndex(
+        (k) => OPTIONISH.has(k.input_type) && (k.label_text || '').trim().toLowerCase() === label && sharesContainer(k, f)
+      );
+      if (twinIndex === -1) {
+        kept.push(f);
+      } else if ((WIDGET_RANK[f.input_type] || 1) > (WIDGET_RANK[kept[twinIndex].input_type] || 1)) {
+        kept[twinIndex] = f;
+      }
+    }
+    return kept;
   }
 
   const Detector = { detectFields, extractLabel, extractContext, isVisible };

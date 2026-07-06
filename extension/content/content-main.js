@@ -31,11 +31,19 @@
   let lastFillSnapshot = []; // for "Clear all fills" (per frame)
   let localFieldsById = new Map(); // field_id -> field (per frame, for pulse)
   let mergedRecords = new Map(); // top frame only: `${frameKey}:${field_id}` -> record
-  // Elements WE filled in an earlier pass of this session. Later passes see
-  // them as "already has a value" and would report SKIPPED_PREFILLED; this
-  // set lets buildOutcomeRecord report them as FILLED instead, so the panel
-  // reflects reality after runFillCycle's multi-pass flow.
+  // Elements WE filled in an earlier pass of this session. Two jobs:
+  // 1. later passes report them FILLED instead of SKIPPED_PREFILLED;
+  // 2. later passes never RE-FILL them — custom comboboxes often read as
+  //    empty (their hidden input has no value even when an option is
+  //    selected), so without this a second pass re-types into an already-
+  //    selected combobox and can wipe the selection. Observed live on a
+  //    Robinhood run: race/ethnicity was filled by one pass and cleared by
+  //    the next.
   const filledByUs = new WeakSet();
+  // Timestamp of our last write; the field watcher ignores mutations for a
+  // grace window after it so our own fills don't trigger "New fields
+  // detected" toast spam (visible through an entire live recording).
+  let lastFillActivityAt = 0;
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -253,11 +261,17 @@
       }
     }
 
-    const toFill = results.filter((r) => ['FILL', 'FILL_LOW_CONFIDENCE', 'FILL_AI_DRAFT'].includes(r.match.status));
+    const toFill = results.filter(
+      (r) =>
+        ['FILL', 'FILL_LOW_CONFIDENCE', 'FILL_AI_DRAFT'].includes(r.match.status) &&
+        !(r.field.__elements && filledByUs.has(r.field.__elements[0]) && !opts.force)
+    );
     const snapshot = toFill.map((r) => ({ field: r.field, originalValue: r.field.current_value }));
 
+    lastFillActivityAt = Date.now();
     const fillEntries = toFill.map((r) => ({ field: r.field, value: r.match.value }));
     const fillOutcomes = await window.Filler.fillSequential(fillEntries, { adapter, force: opts.force });
+    lastFillActivityAt = Date.now();
     const fillOutcomeById = {};
     fillOutcomes.forEach((o) => {
       fillOutcomeById[o.field_id] = o;
@@ -266,6 +280,17 @@
       const outcome = fillOutcomeById[r.field.id];
       if (outcome && (outcome.outcome === 'FILLED' || outcome.outcome === 'FILLED_UNVERIFIED') && r.field.__elements) {
         filledByUs.add(r.field.__elements[0]);
+      }
+    }
+    // Fields we deliberately did NOT re-fill because an earlier pass already
+    // filled them: report as FILLED, not as a dangling FILL intent.
+    for (const r of results) {
+      if (
+        ['FILL', 'FILL_LOW_CONFIDENCE', 'FILL_AI_DRAFT'].includes(r.match.status) &&
+        !fillOutcomeById[r.field.id] &&
+        r.field.__elements && filledByUs.has(r.field.__elements[0])
+      ) {
+        fillOutcomeById[r.field.id] = { field_id: r.field.id, outcome: 'FILLED', note: 'filled in an earlier pass' };
       }
     }
 
@@ -424,6 +449,10 @@
   function offerRefillOnNewFields(adapter) {
     if (stopFieldWatcher) stopFieldWatcher();
     stopFieldWatcher = window.Observer.startFieldWatcher(() => {
+      // Ignore mutations caused by our own fill passes (and the framework
+      // re-renders they trigger) — otherwise the "New fields detected"
+      // toast shows permanently during and after every fill.
+      if (Date.now() - lastFillActivityAt < 2500) return;
       if (IS_TOP) {
         window.ReviewPanel.showToast('New fields detected on this page.', () => runFillCycle(adapter, { force: false }));
       } else {
