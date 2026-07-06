@@ -122,9 +122,9 @@
   }
 
   async function resolveTier4(candidateFields) {
-    if (candidateFields.length === 0) return {};
+    if (candidateFields.length === 0) return { byId: {}, error: null };
     const { settings } = await loadSettings();
-    if (!settings.apiEnabled) return {};
+    if (!settings.apiEnabled) return { byId: {}, error: null };
     const payload = candidateFields.map((f) => ({
       field_id: f.id,
       label_text: f.label_text,
@@ -136,12 +136,15 @@
       chrome.runtime.sendMessage(
         { type: 'RESOLVE_TIER4', fields: payload, catalog: bankKeyCatalog(), job_context: collectJobContext() },
         (response) => {
-          if (chrome.runtime.lastError || !response || !response.results) return resolve({});
+          if (chrome.runtime.lastError) return resolve({ byId: {}, error: chrome.runtime.lastError.message });
+          if (!response || !response.results) return resolve({ byId: {}, error: 'no response from background worker' });
           const byId = {};
           response.results.forEach((r) => {
             byId[r.field_id] = r;
           });
-          resolve(byId);
+          // AI errors were previously swallowed here — the user saw "key
+          // configured but nothing happens" with no clue why. Pass it up.
+          resolve({ byId, error: response.error || null });
         }
       );
     });
@@ -240,12 +243,22 @@
     // an API call per click; the final pass in runFillCycle() runs it once
     // over the fully-expanded page.
     const aiCandidates = opts.skipAi ? [] : results.filter(aiEligible);
-    const tier4Results = await resolveTier4(aiCandidates.map((r) => r.field));
+    const tier4 = await resolveTier4(aiCandidates.map((r) => r.field));
+    if (tier4.error) {
+      frameToast('AI answering failed: ' + tier4.error + ' — check the key with "Test connection" in Options.');
+    }
     for (const r of aiCandidates) {
-      const decision = tier4Results[r.field.id];
+      const decision = tier4.byId[r.field.id];
       if (!decision) continue;
       const next = window.Matcher.resolveApiAction(r.field, bank, decision);
       if (next) r.match = next;
+    }
+
+    // Cover letter: draft from resume profile + job description and attach
+    // as a .txt to any cover-letter upload field (owner request). Runs only
+    // on the AI-enabled pass, once per element.
+    if (!opts.skipAi) {
+      await maybeAttachCoverLetter(results);
     }
 
     // One resume per page: multiple hidden upload inputs (resume + cover
@@ -314,6 +327,57 @@
 
     publishRecords(records);
     persistState(records);
+  }
+
+  /**
+   * Finds cover-letter upload fields and turns them into a FILL of an
+   * AI-drafted letter (.txt — accepted by Greenhouse/Lever/most ATSs)
+   * grounded in the resume profile + this page's job description. The
+   * normal fill pipeline then attaches it via the file strategy's
+   * __attachOverride, so it shows up in the panel's 🤖 section like any
+   * other AI-generated answer.
+   */
+  async function maybeAttachCoverLetter(results) {
+    const candidates = results.filter((r) => {
+      const f = r.field;
+      const hay = `${f.label_text || ''} ${f.context_text || ''}`.toLowerCase();
+      return (
+        f.input_type === 'file' &&
+        /cover letter/.test(hay) &&
+        !(f.__elements && filledByUs.has(f.__elements[0])) &&
+        !['FILL', 'FILL_LOW_CONFIDENCE'].includes(r.match.status)
+      );
+    });
+    if (candidates.length === 0) return;
+
+    const response = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'GENERATE_COVER_LETTER', job_context: collectJobContext() }, (resp) => {
+        if (chrome.runtime.lastError) return resolve({ error: chrome.runtime.lastError.message });
+        resolve(resp || { error: 'no response' });
+      });
+    });
+    if (!response.letter) {
+      if (response.error && response.error !== 'ai_disabled' && response.error !== 'drafting_disabled') {
+        frameToast('Cover letter drafting failed: ' + response.error);
+      }
+      return;
+    }
+
+    const bytes = new TextEncoder().encode(response.letter);
+    const base64 = window.ResumeUtils.bytesToBase64(bytes);
+    const target = candidates[0]; // one cover letter per page
+    target.field.__attachOverride = { name: 'Cover_Letter_Emily_Terry.txt', type: 'text/plain', base64 };
+    target.match = {
+      status: 'FILL_AI_DRAFT',
+      value: response.letter.slice(0, 160) + (response.letter.length > 160 ? '…' : ''),
+      bankKey: null,
+      confidence: 0.9,
+      tier: 4,
+      category: 'ai_answer',
+      aiGenerated: true,
+      lockIcon: false,
+      reason: 'ai_cover_letter_attached',
+    };
   }
 
   /**

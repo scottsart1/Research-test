@@ -136,32 +136,59 @@ function buildSystemPrompt(draftEnabled) {
   return lines.join('\n');
 }
 
-async function callClaude(cfg, payload) {
-  const model = ALLOWED_MODELS.includes(cfg.apiModel) ? cfg.apiModel : ALLOWED_MODELS[0];
+async function callClaudeRaw(cfg, body) {
   const resp = await fetch(CLAUDE_API_URL, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'x-api-key': cfg.apiKey,
       'anthropic-version': '2023-06-01',
+      // Required for direct calls from a browser/extension context: without
+      // it the API rejects the request outright — which is exactly what a
+      // live run showed as "API key configured but nothing ever happens".
+      'anthropic-dangerous-direct-browser-access': 'true',
     },
-    body: JSON.stringify({
-      model,
-      max_tokens: 4096,
-      system: buildSystemPrompt(cfg.aiDraftEnabled),
-      messages: [{ role: 'user', content: JSON.stringify(payload) }],
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!resp.ok) {
-    throw new Error(`Claude API error ${resp.status}`);
+    let detail = '';
+    try {
+      detail = (await resp.text()).slice(0, 200);
+    } catch (e) { /* body unreadable */ }
+    throw new Error(`Claude API HTTP ${resp.status}: ${detail}`);
   }
   const data = await resp.json();
-  const text = (data.content || []).map((b) => b.text || '').join('');
-  const cleaned = text.replace(/^```(json)?/i, '').replace(/```$/i, '').trim();
-  const parsed = JSON.parse(cleaned);
+  return (data.content || []).map((b) => b.text || '').join('');
+}
+
+/** Tolerant array extraction: models occasionally wrap JSON in prose/fences. */
+function extractJsonArray(text) {
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start === -1 || end <= start) throw new Error('no JSON array in Claude response');
+  const parsed = JSON.parse(text.slice(start, end + 1));
   if (!Array.isArray(parsed)) throw new Error('Claude response was not a JSON array');
   return parsed;
+}
+
+const FIELDS_PER_CALL = 10; // keeps each response comfortably under max_tokens
+
+async function callClaude(cfg, payload) {
+  const model = ALLOWED_MODELS.includes(cfg.apiModel) ? cfg.apiModel : ALLOWED_MODELS[0];
+  const allFields = payload.fields;
+  const combined = [];
+  for (let i = 0; i < allFields.length; i += FIELDS_PER_CALL) {
+    const chunkPayload = Object.assign({}, payload, { fields: allFields.slice(i, i + FIELDS_PER_CALL) });
+    const text = await callClaudeRaw(cfg, {
+      model,
+      max_tokens: 8192,
+      system: buildSystemPrompt(cfg.aiDraftEnabled),
+      messages: [{ role: 'user', content: JSON.stringify(chunkPayload) }],
+    });
+    combined.push(...extractJsonArray(text));
+  }
+  return combined;
 }
 
 async function handleResolveTier4(message) {
@@ -208,6 +235,60 @@ async function handleResolveTier4(message) {
   }
 }
 
+async function handleTestApiKey() {
+  const { settings } = await chrome.storage.local.get(['settings']);
+  const cfg = Object.assign({}, DEFAULT_SETTINGS, settings || {});
+  if (!cfg.apiKey) return { ok: false, error: 'No API key saved yet — paste it and click Save first.' };
+  try {
+    const text = await callClaudeRaw(cfg, {
+      model: ALLOWED_MODELS.includes(cfg.apiModel) ? cfg.apiModel : ALLOWED_MODELS[0],
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'Reply with exactly: OK' }],
+    });
+    return /ok/i.test(text) ? { ok: true } : { ok: false, error: 'Unexpected reply: ' + text.slice(0, 80) };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message) };
+  }
+}
+
+async function handleGenerateCoverLetter(message) {
+  const { settings, answerBank } = await chrome.storage.local.get(['settings', 'answerBank']);
+  const cfg = Object.assign({}, DEFAULT_SETTINGS, settings || {});
+  if (!cfg.apiEnabled || !cfg.apiKey) return { error: 'ai_disabled' };
+  if (!cfg.aiDraftEnabled) return { error: 'drafting_disabled' };
+
+  const system = [
+    'Write a professional cover letter for the candidate applying to the job described in job_context.',
+    'Ground every claim strictly in candidate_profile — never invent employers, dates, degrees, skills, metrics, or anecdotes.',
+    'Structure: greeting ("Dear Hiring Team,"), 3 short paragraphs connecting the candidate\'s actual experience to the role\'s needs, a closing with the candidate\'s name. 220-320 words.',
+    'Specific and concrete; no clichés ("passionate team player"), no placeholder brackets, no markdown.',
+    'Respond with ONLY the letter text.',
+  ].join('\n');
+
+  try {
+    const letter = await callClaudeRaw(cfg, {
+      model: ALLOWED_MODELS.includes(cfg.apiModel) ? cfg.apiModel : ALLOWED_MODELS[0],
+      max_tokens: 1024,
+      system,
+      messages: [{
+        role: 'user',
+        content: JSON.stringify({
+          job_context: {
+            page_title: String((message.job_context && message.job_context.page_title) || '').slice(0, 300),
+            page_excerpt: String((message.job_context && message.job_context.page_excerpt) || '').slice(0, 2500),
+          },
+          candidate_profile: buildCandidateProfile(answerBank),
+        }),
+      }],
+    });
+    const trimmed = letter.trim();
+    if (trimmed.length < 200) return { error: 'letter_too_short' };
+    return { letter: trimmed };
+  } catch (e) {
+    return { error: String(e && e.message) };
+  }
+}
+
 async function handlePersistPanelState(message, sender) {
   const tabId = sender.tab && sender.tab.id;
   if (tabId == null) return;
@@ -241,6 +322,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === 'PERSIST_PANEL_STATE') {
     handlePersistPanelState(message, sender).then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (message.type === 'TEST_API_KEY') {
+    handleTestApiKey().then(sendResponse);
+    return true;
+  }
+  if (message.type === 'GENERATE_COVER_LETTER') {
+    handleGenerateCoverLetter(message).then(sendResponse);
     return true;
   }
   if (message.type === 'GET_PANEL_STATE') {
