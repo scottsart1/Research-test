@@ -110,15 +110,26 @@
       return { status: 'NEEDS_REVIEW', value: null, reason: 'option_field_no_options' };
     }
 
-    if (typeof raw === 'number') {
-      const exact = OptionMatcher.matchNumericExact(raw, options);
+    // Numeric-string bank values ("95000") get the same treatment as real
+    // numbers so salary/YoE range buckets work regardless of storage type.
+    const numeric = typeof raw === 'number' ? raw : (/^\d+(\.\d+)?$/.test(String(raw).trim()) ? parseFloat(raw) : null);
+    if (numeric !== null) {
+      const exact = OptionMatcher.matchNumericExact(numeric, options);
       if (exact) return { status: 'FILL', value: exact, reason: 'numeric_exact' };
-      const bucket = OptionMatcher.matchRangeBucket(raw, options);
+      const bucket = OptionMatcher.matchRangeBucket(numeric, options);
       if (bucket) return { status: 'FILL', value: bucket, reason: 'range_bucket' };
       return { status: 'NEEDS_REVIEW', value: null, reason: 'no_matching_range_bucket' };
     }
 
     let matched = OptionMatcher.matchOption(String(raw), options);
+    if (!matched && bankKey === 'eeo.gender') {
+      // Forms phrase gender options differently ("Woman" vs "Female" —
+      // observed live on a Greenhouse EEO section, where "Female" was left
+      // half-typed in the combobox because nothing matched).
+      const GENDER_SYNONYMS = { female: 'woman', woman: 'female', male: 'man', man: 'male' };
+      const alt = GENDER_SYNONYMS[Fuzzy.normalize(raw)];
+      if (alt) matched = OptionMatcher.matchOption(alt, options);
+    }
     if (!matched && bankKey.startsWith('eeo.') && EeoStrings.isDeclineOption(raw)) {
       matched = options.find((o) => EeoStrings.isDeclineOption(o)) || null;
     }
@@ -172,6 +183,12 @@
     if (special) {
       if (special.rule.special === 'always_review') {
         return { bankKey: null, confidence: 0.9, tier: 2, category: 'special', forceReview: true, reason: special.rule.name };
+      }
+      if (special.rule.special === 'skip_optional') {
+        // Deliberately-blank fields (middle name, address line 2,
+        // conditional "If yes..." follow-ups): not an error, not a fill —
+        // shown neutrally in the panel so the human knows it was seen.
+        return { bankKey: null, confidence: 0.9, tier: 2, category: 'optional', skipOptional: true, reason: special.rule.name };
       }
       if (special.rule.special === 'referral') {
         const isChoice = ['radio_group', 'select', 'checkbox_group', 'checkbox'].includes(field.input_type);
@@ -267,12 +284,15 @@
       if (t2.forceReview) {
         return finalize({ status: 'NEEDS_REVIEW', value: null, bankKey: null, confidence: t2.confidence, tier: 2, category: t2.category, reason: t2.reason });
       }
-      return finalize(applyBankKey(t2, bank, field));
+      if (t2.skipOptional) {
+        return finalize({ status: 'SKIPPED_OPTIONAL', value: null, bankKey: null, confidence: t2.confidence, tier: 2, category: t2.category, reason: t2.reason });
+      }
+      return finalize(attrConflictGuard(applyBankKey(t2, bank, field), field));
     }
 
     const t3 = tier3(field, hay, thresholds);
     if (t3) {
-      const resolved = applyBankKey(t3, bank, field);
+      const resolved = attrConflictGuard(applyBankKey(t3, bank, field), field);
       if (resolved.status === 'FILL' && t3.lowConfidence) {
         resolved.status = 'FILL_LOW_CONFIDENCE';
       }
@@ -280,6 +300,38 @@
     }
 
     return finalize({ status: 'UNMATCHED', value: null, bankKey: null, confidence: 0, tier: null, category: 'unmatched', reason: 'no_local_match' });
+  }
+
+  // Strong semantic tokens that may appear in a field's name/id attributes.
+  // When a label-derived match (Tier 2/3) contradicts what the machine
+  // attributes say the field is, trust neither: flag for review. Live
+  // failure this guards against (Pinpoint): label extraction misattributed
+  // "First Name" to a City input, filling "Emily" into city and zip.
+  const ATTR_HINT_TOKENS = ['email', 'phone', 'city', 'zip', 'postal', 'first', 'last', 'country', 'state', 'linkedin'];
+
+  function attrConflictGuard(result, field) {
+    if (!result || (result.status !== 'FILL' && result.status !== 'FILL_LOW_CONFIDENCE')) return result;
+    if (!result.bankKey) return result;
+    const attrs = field.attributes || {};
+    const attrText = Fuzzy.normalize(`${attrs.name || ''} ${attrs.id || ''}`);
+    if (!attrText) return result;
+    const keyText = result.bankKey.toLowerCase();
+    const present = ATTR_HINT_TOKENS.filter((t) => attrText.includes(t));
+    if (present.length === 0) return result;
+    // Consistent if ANY present token also appears in the matched key
+    // (e.g. name="phone_country_code" matched to phone_formatted is fine
+    // even though "country" alone would look contradictory).
+    const consistent = present.some((t) => keyText.includes(t === 'postal' ? 'zip' : t));
+    if (consistent) return result;
+    return {
+      status: 'NEEDS_REVIEW',
+      value: null,
+      bankKey: result.bankKey,
+      confidence: result.confidence,
+      tier: result.tier,
+      category: result.category,
+      reason: `attr_label_conflict:${present.join(',')}`,
+    };
   }
 
   function applyBankKey(tierHit, bank, field) {
@@ -337,6 +389,68 @@
     });
   }
 
+  // Questions the AI may map to existing answers but must never *draft*
+  // prose for: attestations, demographics, figures, and credentials.
+  const DRAFT_FORBIDDEN_RE =
+    /salary|compensation|pay (rate|range)|clearance|citizen|visa|sponsor|immigration|gender|race|ethnicit|veteran|disabilit|criminal|social security|\bssn\b|date of birth|\bdob\b|password|log ?in|username/;
+
+  /**
+   * Applies one AI decision {action, answer_key, option, draft, confidence}
+   * to a field, with every path locally validated — the model proposes, this
+   * function disposes:
+   *   - "map": same pipeline as resolveApiKey (option matching, placeholder
+   *     guard, work-auth namespace rejection).
+   *   - "option": only for option fields, and the returned string must match
+   *     one of the field's actual options via OptionMatcher — never trusted
+   *     verbatim.
+   *   - "draft": only for free-text inputs, only for questions outside
+   *     DRAFT_FORBIDDEN_RE, length-capped. Result is marked aiGenerated so
+   *     the panel pins it for human reading before submit.
+   * Returns null when the decision should be discarded (keeps the local
+   * NEEDS_REVIEW/UNMATCHED record instead).
+   */
+  function resolveApiAction(field, bank, decision) {
+    if (!decision || !decision.action || decision.action === 'skip') return null;
+    const confidence = typeof decision.confidence === 'number' ? decision.confidence : 0;
+    const hay = fieldHaystack(field);
+
+    // Work authorization stays a closed subsystem no matter what the model
+    // returns (spec §4.3 rule 3 — unchanged by the AI-drafting feature).
+    if (WORK_AUTH_DETECT_RE.test(hay)) {
+      return finalize({ status: 'NEEDS_REVIEW', category: 'work_auth', tier: 4, lockIcon: true, reason: 'api_disabled_for_work_auth' });
+    }
+
+    if (decision.action === 'map') {
+      const mapped = resolveApiKey(field, bank, decision.answer_key, confidence);
+      return mapped.status === 'UNMATCHED' ? null : mapped;
+    }
+
+    if (decision.action === 'option') {
+      if (confidence < 0.75) return null;
+      if (!['select', 'radio_group', 'checkbox_group'].includes(field.input_type)) return null;
+      const matched = OptionMatcher.matchOption(String(decision.option || ''), field.options || []);
+      if (!matched) return null;
+      return finalize({
+        status: 'FILL', value: matched, bankKey: null, confidence, tier: 4,
+        category: 'ai_answer', reason: 'api_option', aiGenerated: true,
+      });
+    }
+
+    if (decision.action === 'draft') {
+      if (confidence < 0.6) return null;
+      if (!['text', 'textarea', 'contenteditable'].includes(field.input_type)) return null;
+      if (DRAFT_FORBIDDEN_RE.test(hay)) return null;
+      const draft = String(decision.draft || '').trim();
+      if (!draft || draft.length > 3000) return null;
+      return finalize({
+        status: 'FILL_AI_DRAFT', value: draft, bankKey: null, confidence, tier: 4,
+        category: 'ai_answer', reason: 'api_draft', aiGenerated: true,
+      });
+    }
+
+    return null;
+  }
+
   /**
    * Repeatable-block indexing (spec §4.4 / §11#4). Match rules always emit
    * index-0 keys (experience.0.company, education.0.school, ...). Given the
@@ -377,7 +491,7 @@
     return results;
   }
 
-  const Matcher = { matchField, resolveApiKey, getByPath, isPlaceholder, resolveValue, applyRepeatableBlockIndexing, WORK_AUTH_DETECT_RE };
+  const Matcher = { matchField, resolveApiKey, resolveApiAction, getByPath, isPlaceholder, resolveValue, applyRepeatableBlockIndexing, WORK_AUTH_DETECT_RE, DRAFT_FORBIDDEN_RE };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = Matcher;

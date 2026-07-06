@@ -29,11 +29,22 @@
       </section>
 
       <section class="card">
-        <h2>2. Claude API (optional, Tier 4 fallback)</h2>
-        <p class="muted">Used only for question→key <em>mapping</em> when local matching fails. Never used for answer generation, never used for work-authorization questions. Only labels + options are sent — never bank values.</p>
+        <h2>2. Claude AI answering (optional)</h2>
+        <p class="muted">When enabled, questions local matching can't confidently answer are sent to Claude to understand what they're really asking. Claude can map them to your existing answers, pick the right dropdown option, or (if drafting is on) write first-person answers to qualitative questions grounded in your profile below. Sent per request: the questions, their options, the job page title/excerpt, and a profile built from your education, experience, and skills. Never sent, never AI-answered: work authorization, EEO demographics, salary figures, clearance, criminal history, logins/passwords. Every AI-drafted answer is pinned in the review panel with a 🤖 marker — read it before you submit.</p>
         <label class="field">
           <input type="checkbox" id="api-enabled" />
-          Enable Claude API fallback
+          Enable Claude AI answering
+        </label>
+        <label class="field">
+          <input type="checkbox" id="ai-draft-enabled" checked />
+          Also draft answers to qualitative questions ("Why this role?", "Reason for leaving", …)
+        </label>
+        <label class="field">
+          <span>Model</span>
+          <select id="api-model">
+            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 — fast &amp; cheap</option>
+            <option value="claude-sonnet-5">Claude Sonnet 5 — better drafting</option>
+          </select>
         </label>
         <label class="field">
           <span>Anthropic API key</span>

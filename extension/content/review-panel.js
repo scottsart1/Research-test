@@ -12,10 +12,13 @@
     FILLED: '✅',
     FILLED_LOW_CONFIDENCE: '⚠️',
     FILLED_UNVERIFIED: '⚠️',
+    FILLED_AI_DRAFT: '🤖',
+    FILL_AI_DRAFT: '🤖',
     NEEDS_REVIEW: '⛔',
     UNMATCHED: '⛔',
     SKIPPED_PREFILLED: '⏭️',
     SKIPPED_UNSUPPORTED_TYPE: '⛔',
+    SKIPPED_OPTIONAL: '➖',
     FAILED: '⛔',
   };
 
@@ -82,14 +85,17 @@
     const sh = ensureHost();
     const panel = sh.querySelector('.panel');
 
-    const filled = outcomes.filter((o) => o.status === 'FILLED').length;
+    const isAiItem = (o) => o.aiGenerated || o.status === 'FILLED_AI_DRAFT' || o.status === 'FILL_AI_DRAFT';
+    const filled = outcomes.filter((o) => o.status === 'FILLED' && !isAiItem(o)).length;
     const warnings = outcomes.filter((o) => o.status === 'FILLED_LOW_CONFIDENCE' || o.status === 'FILLED_UNVERIFIED').length;
     const review = outcomes.filter((o) => o.status === 'NEEDS_REVIEW' || o.status === 'UNMATCHED' || o.status === 'FAILED' || o.status === 'SKIPPED_UNSUPPORTED_TYPE').length;
     const prefilled = outcomes.filter((o) => o.status === 'SKIPPED_PREFILLED').length;
+    const optional = outcomes.filter((o) => o.status === 'SKIPPED_OPTIONAL').length;
     const lockItems = outcomes.filter((o) => o.lockIcon);
+    const aiItems = outcomes.filter((o) => !o.lockIcon && isAiItem(o));
     const clearanceFlag = outcomes.some((o) => o.category === 'clearance' && o.clearanceRequiredNotice);
 
-    const others = outcomes.filter((o) => !o.lockIcon);
+    const others = outcomes.filter((o) => !o.lockIcon && !isAiItem(o));
     const sorted = [...others].sort((a, b) => rank(a) - rank(b));
 
     panel.innerHTML = '';
@@ -99,9 +105,11 @@
     header.innerHTML = `<h1>Autofill review</h1>
       <div class="summary">
         <span>✅ ${filled} filled</span>
+        ${aiItems.length > 0 ? `<span>🤖 ${aiItems.length} AI-drafted</span>` : ''}
         <span>⚠️ ${warnings} low-confidence</span>
         <span>⛔ ${review} need review</span>
         ${prefilled > 0 ? `<span>⏭️ ${prefilled} already filled</span>` : ''}
+        ${optional > 0 ? `<span>➖ ${optional} left blank (optional)</span>` : ''}
       </div>`;
     panel.appendChild(header);
 
@@ -125,6 +133,14 @@
       lockSection.innerHTML = '<h2>🔒 Work authorization (always shown)</h2>';
       lockItems.forEach((o) => lockSection.appendChild(renderItem(o, handlers)));
       panel.appendChild(lockSection);
+    }
+
+    if (aiItems.length > 0) {
+      const aiSection = document.createElement('div');
+      aiSection.className = 'lock-section';
+      aiSection.innerHTML = '<h2>🤖 AI-drafted — read every word before submitting</h2>';
+      aiItems.forEach((o) => aiSection.appendChild(renderItem(o, handlers)));
+      panel.appendChild(aiSection);
     }
 
     const list = document.createElement('div');
@@ -161,7 +177,7 @@
     item.className = 'item';
     const icon = document.createElement('div');
     icon.className = 'icon';
-    icon.textContent = (o.lockIcon ? '🔒 ' : '') + (ICONS[o.status] || '•');
+    icon.textContent = (o.lockIcon ? '🔒 ' : '') + (o.aiGenerated ? '🤖' : ICONS[o.status] || '•');
     const body = document.createElement('div');
     body.innerHTML = `<div class="label">${escapeHtml(o.label_text || o.field_id)}</div>
       <div class="meta">${escapeHtml(categoryLabel(o.category))}${o.value ? ' — ' + escapeHtml(String(o.value)) : ''}</div>

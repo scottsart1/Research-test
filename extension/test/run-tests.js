@@ -539,6 +539,59 @@ console.log('\n=== Ad-hoc screening questions ===');
   });
 }
 
+console.log('\n=== AI semantic answering (resolveApiAction) ===');
+{
+  test('action "draft" on a textarea produces a flagged AI draft', () => {
+    const f = field({ input_type: 'textarea', label_text: 'Why do you want to work at this company?' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'My data science background at Perry International and Koch Industries maps directly onto this role.', confidence: 0.85 });
+    assert.strictEqual(r.status, 'FILL_AI_DRAFT');
+    assert.strictEqual(r.aiGenerated, true);
+    assert.ok(r.value.includes('Perry International'));
+  });
+  test('action "draft" on a select is rejected (drafts are free-text only)', () => {
+    const f = field({ input_type: 'select', label_text: 'Team size preference', options: ['Small', 'Large'] });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'Small', confidence: 0.9 });
+    assert.strictEqual(r, null);
+  });
+  test('action "draft" on a salary question is rejected (forbidden category)', () => {
+    const f = field({ input_type: 'text', label_text: 'What are your salary expectations?' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'Around $95,000', confidence: 0.9 });
+    assert.strictEqual(r, null);
+  });
+  test('action "draft" on a work-auth question -> locked NEEDS_REVIEW', () => {
+    const f = field({ input_type: 'text', label_text: 'Describe your visa sponsorship needs' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'None', confidence: 0.95 });
+    assert.strictEqual(r.status, 'NEEDS_REVIEW');
+    assert.strictEqual(r.lockIcon, true);
+  });
+  test('action "draft" below confidence 0.6 is rejected', () => {
+    const f = field({ input_type: 'textarea', label_text: 'Tell us about a project you are proud of' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'draft', draft: 'Something.', confidence: 0.4 });
+    assert.strictEqual(r, null);
+  });
+  test('action "option" must validate against the field\'s real options', () => {
+    const f = field({ input_type: 'select', label_text: 'Which shift can you work?', options: ['Day shift', 'Night shift', 'Either'] });
+    const good = Matcher.resolveApiAction(f, defaultBank, { action: 'option', option: 'Day shift', confidence: 0.9 });
+    assert.strictEqual(good.status, 'FILL');
+    assert.strictEqual(good.value, 'Day shift');
+    assert.strictEqual(good.aiGenerated, true);
+    const bad = Matcher.resolveApiAction(f, defaultBank, { action: 'option', option: 'Swing shift', confidence: 0.9 });
+    assert.strictEqual(bad, null);
+  });
+  test('action "map" still routes through the key pipeline with all guards', () => {
+    const f = field({ input_type: 'text', label_text: 'Your top tools?' });
+    const r = Matcher.resolveApiAction(f, defaultBank, { action: 'map', answer_key: 'skills_flat_list', confidence: 0.9 });
+    assert.strictEqual(r.status, 'FILL');
+    assert.ok(String(r.value).includes('Python'));
+  });
+  test('action "skip" and unknown actions -> null (local record kept)', () => {
+    const f = field({ input_type: 'text', label_text: 'Anything else?' });
+    assert.strictEqual(Matcher.resolveApiAction(f, defaultBank, { action: 'skip', confidence: 1 }), null);
+    assert.strictEqual(Matcher.resolveApiAction(f, defaultBank, { action: 'hack', confidence: 1 }), null);
+    assert.strictEqual(Matcher.resolveApiAction(f, defaultBank, null), null);
+  });
+}
+
 console.log('\n=== Resume attachment (spec §6 "file" + resume-utils.js) ===');
 {
   test('base64 round-trip preserves bytes exactly, including the bundled PDF', () => {
@@ -561,6 +614,305 @@ console.log('\n=== Resume attachment (spec §6 "file" + resume-utils.js) ===');
     const r = Matcher.matchField(field({ input_type: 'file', label_text: 'CV' }), defaultBank, {});
     assert.strictEqual(r.status, 'FILL');
     assert.strictEqual(r.bankKey, 'documents.resume_filename');
+  });
+}
+
+console.log('\n=== Live-run regressions (EY/SuccessFactors + Nüvitek/Pinpoint) ===');
+{
+  const Filler = require('../content/filler.js');
+
+  test('attrConflictGuard: mismatched label/attribute -> NEEDS_REVIEW instead of silent misfill', () => {
+    // Live bug: sibling-label extraction misattributed "First Name" as the
+    // label for a City input (Pinpoint renders labels after the input in
+    // some layouts). The attribute here ("cityField1") is close enough to
+    // signal city but not an exact Tier-1 dictionary hit, so the field
+    // falls through to label-based Tier 2/3 matching on "First Name" —
+    // exactly where the guard needs to catch the conflict and refuse to
+    // silently fill "Emily" into a city field.
+    const f = field({ input_type: 'text', label_text: 'First Name', attributes: { name: 'cityField1', id: 'cityField1' } });
+    const r = Matcher.matchField(f, defaultBank, {});
+    assert.strictEqual(r.status, 'NEEDS_REVIEW');
+    assert.ok(r.reason.startsWith('attr_label_conflict'));
+  });
+  test('attrConflictGuard: consistent attribute + label still fills normally', () => {
+    const f = field({ input_type: 'text', label_text: 'First Name', attributes: { name: 'firstName', id: 'firstName' } });
+    const r = Matcher.matchField(f, defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Emily');
+  });
+
+  test('setNativeValue on a non-Input/TextArea custom widget never throws "Illegal invocation"', () => {
+    // Live bug: SuccessFactors renders some comboboxes as non-<input>
+    // elements; calling HTMLInputElement.prototype's setter on them threw.
+    const events = [];
+    const customWidget = {
+      _value: '',
+      get value() { return this._value; },
+      set value(v) { this._value = v; },
+      addEventListener(type, fn) {
+        this._listeners = this._listeners || {};
+        (this._listeners[type] = this._listeners[type] || []).push(fn);
+      },
+      dispatchEvent(evt) {
+        events.push(evt.type);
+        ((this._listeners || {})[evt.type] || []).forEach((fn) => fn(evt));
+        return true;
+      },
+    };
+    assert.doesNotThrow(() => Filler.setNativeValue(customWidget, 'English'));
+    assert.strictEqual(customWidget.value, 'English');
+    assert.ok(events.includes('input') && events.includes('change'));
+  });
+
+  test('"State/Province" (slash form) resolves to identity.state', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'State/Province', context_text: 'Addresses (1)', options: ['No Selection', 'Virginia', 'Maryland'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Virginia');
+  });
+  test('"Country/Region" resolves to identity.country', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Country/Region', context_text: 'Addresses (1)', options: ['— Make a Selection —', 'United States', 'Canada'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'United States');
+  });
+
+  test('"Address Line 2" -> SKIPPED_OPTIONAL, not review-queue noise', () => {
+    const r = Matcher.matchField(field({ label_text: 'Address Line 2' }), defaultBank, {});
+    assert.strictEqual(r.status, 'SKIPPED_OPTIONAL');
+  });
+  test('"Legal Middle Name" -> SKIPPED_OPTIONAL', () => {
+    const r = Matcher.matchField(field({ label_text: 'Legal Middle Name' }), defaultBank, {});
+    assert.strictEqual(r.status, 'SKIPPED_OPTIONAL');
+  });
+  test('conditional "If Yes Which Country..." follow-up -> SKIPPED_OPTIONAL', () => {
+    const r = Matcher.matchField(field({ input_type: 'select', label_text: 'If Yes Which Country Were You Last Assigned to?' }), defaultBank, {});
+    assert.strictEqual(r.status, 'SKIPPED_OPTIONAL');
+  });
+
+  test('Prefix select with real salutation options -> Ms.', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Prefix', options: ['No Selection', 'Mr.', 'Ms.', 'Mrs.', 'Dr.'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Ms.');
+  });
+  test('Prefix select with non-salutation options is left alone (Title vs. Prefix collision guard)', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Prefix', options: ['No Selection', 'Manager', 'Director'] }),
+      defaultBank,
+      {}
+    );
+    assert.notStrictEqual(r.bankKey, 'identity.prefix');
+  });
+
+  test('"Are you an EY Alumni?" -> logistics.worked_here_before -> No', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Are you an EY Alumni?', options: ['No Selection', 'Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'No');
+  });
+
+  test('resume rule gated to file inputs — a "Language" select must never match it', () => {
+    // Live bug: page prose ("Please note that uploading a resume/CV...")
+    // leaked into context_text and matched two unrelated Language selects.
+    const r = Matcher.matchField(
+      field({
+        input_type: 'select',
+        label_text: 'Language',
+        context_text: 'Please note that uploading a resume/CV is optional. Accepted file types include DOCX, PDF.',
+        options: ['English', 'Spanish'],
+      }),
+      defaultBank,
+      {}
+    );
+    assert.notStrictEqual(r.bankKey, 'documents.resume_filename');
+  });
+  test('cover-letter file field is not swept into the resume rule', () => {
+    const r = Matcher.matchField(field({ input_type: 'file', label_text: 'Cover letter' }), defaultBank, {});
+    assert.notStrictEqual(r.bankKey, 'documents.resume_filename');
+  });
+
+  test('$-bucketed compensation range: 95000 -> "$90,001-$100,000"', () => {
+    const options = ['$30,000-$40,000', '$40,001-$50,000', '$90,001-$100,000', '$100,001-$110,000', '$201,000+', 'prefer not to answer'];
+    assert.strictEqual(OptionMatcher.matchRangeBucket(95000, options), '$90,001-$100,000');
+  });
+  test('EY-style compensation-range question fills the correct $ bucket end to end', () => {
+    const options = ['$30,000-$40,000', '$40,001-$50,000', '$90,001-$100,000', '$100,001-$110,000', '$201,000+', 'prefer not to answer'];
+    const r = Matcher.matchField(
+      field({
+        input_type: 'radio_group',
+        label_text: 'In applying for this position, please select the range that most closely represents your desired total compensation.',
+        options,
+      }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, '$90,001-$100,000');
+  });
+  test('numeric-string bank values ("95000") get range-bucket treatment, not just real numbers', () => {
+    const bank = freshBank({ compensation: Object.assign({}, defaultBank.compensation, { desired_salary_annual: '95000' }) });
+    const options = ['$30,000-$40,000', '$90,001-$100,000', '$201,000+'];
+    const r = Matcher.matchField(field({ input_type: 'select', label_text: 'Desired salary', options }), bank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, '$90,001-$100,000');
+  });
+}
+
+console.log('\n=== Live-run regressions (Robinhood / Greenhouse new board) ===');
+{
+  test('"Have you ever worked for Robinhood..." -> No (not in resume)', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Have you ever worked for Robinhood as an employee or contractor of Robinhood?', options: ['Select...', 'Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'No');
+  });
+  test('"Have you ever worked for Koch Industries?" -> Yes (in resume)', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Have you ever worked for Koch Industries?', options: ['Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Yes');
+  });
+  test('single distinctive token: "worked at Koch before?" -> Yes', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'radio_group', label_text: 'Have you ever worked at Koch before?', options: ['Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Yes');
+  });
+  test('generic token never triggers a false Yes: "worked for American Express?" -> No', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'radio_group', label_text: 'Have you ever worked for American Express?', options: ['Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'No');
+  });
+  test('"American University" as a full phrase still hits: -> Yes', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'radio_group', label_text: 'Have you previously worked at American University?', options: ['Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Yes');
+  });
+
+  test('"Location (City)" -> identity.city', () => {
+    const r = Matcher.matchField(field({ label_text: 'Location (City)' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Vienna');
+  });
+  test('"Website" -> identity.portfolio', () => {
+    const r = Matcher.matchField(field({ label_text: 'Website' }), defaultBank, {});
+    assert.strictEqual(r.bankKey, 'identity.portfolio');
+  });
+  test('"What gender pronouns do you prefer?" -> identity.pronouns', () => {
+    const r = Matcher.matchField(field({ input_type: 'select', label_text: 'What gender pronouns do you prefer?', options: ['She/Her', 'He/Him', 'They/Them', "I don't wish to answer"] }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'She/Her');
+  });
+  test('"What is your military status?" -> eeo.veteran_status', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'What is your military status?', options: ['I am not a protected veteran', 'I identify as one or more of the classifications of a protected veteran', "I don't wish to answer"] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'I am not a protected veteran');
+  });
+  test('LGBTQ+ question -> decline via synonym bag', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Do you identify as part of the LGBTQ+ community?', options: ['Yes', 'No', 'I prefer not to say'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'I prefer not to say');
+  });
+  test('"Are you willing to work from the office(s) listed?" -> Yes', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Are you willing to work from the office(s) listed on this posting?', options: ['Select...', 'Yes', 'No'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Yes');
+  });
+  test('conflict-of-interest / bribery attestations -> always NEEDS_REVIEW', () => {
+    const coi = Matcher.matchField(field({ input_type: 'select', label_text: 'Do you have any relationships that present a conflict of interest?', options: ['Yes', 'No'] }), defaultBank, {});
+    assert.strictEqual(coi.status, 'NEEDS_REVIEW');
+    const bribery = Matcher.matchField(field({ input_type: 'select', label_text: 'Have you held a position as a government official in the last 5 years?', options: ['Yes', 'No'] }), defaultBank, {});
+    assert.strictEqual(bribery.status, 'NEEDS_REVIEW');
+  });
+  test('"If you answered \'Yes\' to the above question..." -> SKIPPED_OPTIONAL', () => {
+    const r = Matcher.matchField(field({ input_type: 'textarea', label_text: 'If you answered "Yes" to the above question, please provide details here:' }), defaultBank, {});
+    assert.strictEqual(r.status, 'SKIPPED_OPTIONAL');
+  });
+  test('bare "Attach" label on a hidden file input -> resume', () => {
+    const r = Matcher.matchField(field({ input_type: 'file', label_text: 'Attach' }), defaultBank, {});
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.bankKey, 'documents.resume_filename');
+  });
+  test('bare "Attach" on a NON-file element never matches resume', () => {
+    const r = Matcher.matchField(field({ input_type: 'text', label_text: 'Attach' }), defaultBank, {});
+    assert.notStrictEqual(r.bankKey, 'documents.resume_filename');
+  });
+
+  test('phone verification tolerates widget reformatting (digits-equal)', () => {
+    const Filler = require('../content/filler.js');
+    // Widget stripped our formatting: still equivalent.
+    assert.strictEqual(Filler.valuesEquivalent('7179034428', '(717) 903-4428'), true);
+    // Widget added formatting to our bare digits: still equivalent.
+    assert.strictEqual(Filler.valuesEquivalent('(717) 903-4428', '7179034428'), true);
+    // Different numbers: never equivalent.
+    assert.strictEqual(Filler.valuesEquivalent('7179034429', '(717) 903-4428'), false);
+    // Non-phone text still requires exact equality.
+    assert.strictEqual(Filler.valuesEquivalent('Emily ', 'Emily'), false);
+  });
+}
+
+console.log('\n=== Live-run regressions (Robinhood recording): gender synonyms ===');
+{
+  test('bank "Female" selects "Woman" when that is the offered option', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'What is your gender identity?', options: ['Man', 'Woman', 'Non-binary', "I don't wish to answer"] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'FILL');
+    assert.strictEqual(r.value, 'Woman');
+  });
+  test('bank "Female" still prefers a literal "Female" option when present', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'Gender', options: ['Male', 'Female', 'Decline to self-identify'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.value, 'Female');
+  });
+  test('no gender-shaped option at all -> NEEDS_REVIEW, never a guess', () => {
+    const r = Matcher.matchField(
+      field({ input_type: 'select', label_text: 'What is your gender identity?', options: ['Alpha', 'Beta'] }),
+      defaultBank,
+      {}
+    );
+    assert.strictEqual(r.status, 'NEEDS_REVIEW');
   });
 }
 

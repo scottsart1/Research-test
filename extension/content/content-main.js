@@ -31,6 +31,19 @@
   let lastFillSnapshot = []; // for "Clear all fills" (per frame)
   let localFieldsById = new Map(); // field_id -> field (per frame, for pulse)
   let mergedRecords = new Map(); // top frame only: `${frameKey}:${field_id}` -> record
+  // Elements WE filled in an earlier pass of this session. Two jobs:
+  // 1. later passes report them FILLED instead of SKIPPED_PREFILLED;
+  // 2. later passes never RE-FILL them — custom comboboxes often read as
+  //    empty (their hidden input has no value even when an option is
+  //    selected), so without this a second pass re-types into an already-
+  //    selected combobox and can wipe the selection. Observed live on a
+  //    Robinhood run: race/ethnicity was filled by one pass and cleared by
+  //    the next.
+  const filledByUs = new WeakSet();
+  // Timestamp of our last write; the field watcher ignores mutations for a
+  // grace window after it so our own fills don't trigger "New fields
+  // detected" toast spam (visible through an entire live recording).
+  let lastFillActivityAt = 0;
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -89,19 +102,39 @@
     ];
   }
 
-  async function resolveTier4(unmatchedFields, bank) {
-    if (unmatchedFields.length === 0) return {};
+  // Fields the AI must never see, even for mapping: locked work-auth
+  // records, EEO demographics, and anything the local rules flagged as
+  // credentials or a human-only attestation.
+  const AI_EXCLUDED_REASONS = new Set(['password', 'login_username', 'public_trust']);
+
+  function aiEligible(r) {
+    if (r.match.lockIcon || r.match.category === 'work_auth' || r.match.category === 'eeo') return false;
+    if (AI_EXCLUDED_REASONS.has(r.match.reason)) return false;
+    return r.match.status === 'UNMATCHED' || r.match.status === 'NEEDS_REVIEW';
+  }
+
+  function collectJobContext() {
+    let excerpt = '';
+    try {
+      excerpt = (document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 2500);
+    } catch (e) { /* detached body etc. */ }
+    return { page_title: document.title || '', page_excerpt: excerpt };
+  }
+
+  async function resolveTier4(candidateFields) {
+    if (candidateFields.length === 0) return {};
     const { settings } = await loadSettings();
     if (!settings.apiEnabled) return {};
-    const payload = unmatchedFields.map((f) => ({
+    const payload = candidateFields.map((f) => ({
       field_id: f.id,
       label_text: f.label_text,
       context_text: f.context_text,
+      input_type: f.input_type,
       options: f.options,
     }));
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { type: 'RESOLVE_TIER4', fields: payload, catalog: bankKeyCatalog() },
+        { type: 'RESOLVE_TIER4', fields: payload, catalog: bankKeyCatalog(), job_context: collectJobContext() },
         (response) => {
           if (chrome.runtime.lastError || !response || !response.results) return resolve({});
           const byId = {};
@@ -119,10 +152,16 @@
    * single panel status. A low-confidence match that filled successfully
    * must stay visible as a warning, not get promoted to a clean FILLED.
    */
-  function combinedStatus(matchResult, fillOutcome) {
+  function combinedStatus(matchResult, fillOutcome, field) {
     if (!fillOutcome) return matchResult.status;
     if (fillOutcome.outcome === 'FILLED' && matchResult.status === 'FILL_LOW_CONFIDENCE') {
       return 'FILLED_LOW_CONFIDENCE';
+    }
+    if (fillOutcome.outcome === 'FILLED' && matchResult.status === 'FILL_AI_DRAFT') {
+      return 'FILLED_AI_DRAFT';
+    }
+    if (fillOutcome.outcome === 'SKIPPED_PREFILLED' && field && field.__elements && filledByUs.has(field.__elements[0])) {
+      return 'FILLED'; // our own earlier-pass fill, not a pre-existing value
     }
     return fillOutcome.outcome;
   }
@@ -134,7 +173,8 @@
       category: matchResult.category,
       value: matchResult.value,
       lockIcon: !!matchResult.lockIcon,
-      status: combinedStatus(matchResult, fillOutcome),
+      aiGenerated: !!matchResult.aiGenerated,
+      status: combinedStatus(matchResult, fillOutcome, field),
       note: (fillOutcome && fillOutcome.note) || matchResult.reason || undefined,
     };
   }
@@ -155,7 +195,7 @@
       frameToast('No answer bank configured — open the extension options page first.');
       return;
     }
-    if (!settings.immigrationStatus && IS_TOP) {
+    if (!settings.immigrationStatus && IS_TOP && !opts.skipAi) {
       frameToast('No work-authorization preset selected in options — those questions will be flagged for review.');
     }
 
@@ -191,24 +231,68 @@
     // field gets re-pointed at experience[1]/[2] etc. (spec §4.4, §11#4).
     window.Matcher.applyRepeatableBlockIndexing(results, bank);
 
-    const unmatched = results.filter((r) => r.match.status === 'UNMATCHED' && r.match.category !== 'work_auth');
-    const tier4Results = await resolveTier4(unmatched.map((r) => r.field), bank);
+    // AI pass: everything local matching couldn't confidently answer —
+    // unmatched AND needs-review — goes to the model for semantic
+    // understanding (map to a known answer, pick the right option, or draft
+    // a grounded qualitative answer). Locked/attestation fields never go.
+    // Skipped during the fast initial pass and each section-expansion
+    // refill (opts.skipAi) so clicking through "Add" controls doesn't fire
+    // an API call per click; the final pass in runFillCycle() runs it once
+    // over the fully-expanded page.
+    const aiCandidates = opts.skipAi ? [] : results.filter(aiEligible);
+    const tier4Results = await resolveTier4(aiCandidates.map((r) => r.field));
+    for (const r of aiCandidates) {
+      const decision = tier4Results[r.field.id];
+      if (!decision) continue;
+      const next = window.Matcher.resolveApiAction(r.field, bank, decision);
+      if (next) r.match = next;
+    }
+
+    // One resume per page: multiple hidden upload inputs (resume + cover
+    // letter + "additional documents") can all look resume-shaped; only the
+    // FIRST in DOM order gets the attachment, the rest are flagged.
+    let resumeTargetSeen = false;
     for (const r of results) {
-      const apiHit = tier4Results[r.field.id];
-      if (r.match.status === 'UNMATCHED' && apiHit) {
-        r.match = window.Matcher.resolveApiKey(r.field, bank, apiHit.answer_key, apiHit.confidence);
+      if (r.match.bankKey === 'documents.resume_filename' && (r.match.status === 'FILL' || r.match.status === 'FILL_LOW_CONFIDENCE')) {
+        if (resumeTargetSeen) {
+          r.match = Object.assign({}, r.match, { status: 'NEEDS_REVIEW', value: null, reason: 'additional_upload_field' });
+        }
+        resumeTargetSeen = true;
       }
     }
 
-    const toFill = results.filter((r) => r.match.status === 'FILL' || r.match.status === 'FILL_LOW_CONFIDENCE');
+    const toFill = results.filter(
+      (r) =>
+        ['FILL', 'FILL_LOW_CONFIDENCE', 'FILL_AI_DRAFT'].includes(r.match.status) &&
+        !(r.field.__elements && filledByUs.has(r.field.__elements[0]) && !opts.force)
+    );
     const snapshot = toFill.map((r) => ({ field: r.field, originalValue: r.field.current_value }));
 
+    lastFillActivityAt = Date.now();
     const fillEntries = toFill.map((r) => ({ field: r.field, value: r.match.value }));
     const fillOutcomes = await window.Filler.fillSequential(fillEntries, { adapter, force: opts.force });
+    lastFillActivityAt = Date.now();
     const fillOutcomeById = {};
     fillOutcomes.forEach((o) => {
       fillOutcomeById[o.field_id] = o;
     });
+    for (const r of toFill) {
+      const outcome = fillOutcomeById[r.field.id];
+      if (outcome && (outcome.outcome === 'FILLED' || outcome.outcome === 'FILLED_UNVERIFIED') && r.field.__elements) {
+        filledByUs.add(r.field.__elements[0]);
+      }
+    }
+    // Fields we deliberately did NOT re-fill because an earlier pass already
+    // filled them: report as FILLED, not as a dangling FILL intent.
+    for (const r of results) {
+      if (
+        ['FILL', 'FILL_LOW_CONFIDENCE', 'FILL_AI_DRAFT'].includes(r.match.status) &&
+        !fillOutcomeById[r.field.id] &&
+        r.field.__elements && filledByUs.has(r.field.__elements[0])
+      ) {
+        fillOutcomeById[r.field.id] = { field_id: r.field.id, outcome: 'FILLED', note: 'filled in an earlier pass' };
+      }
+    }
 
     lastFillSnapshot = lastFillSnapshot.concat(snapshot);
 
@@ -232,6 +316,37 @@
     persistState(records);
   }
 
+  /**
+   * Full "clickable" fill cycle (owner request: "produce the needful after
+   * clicking and going through the options available on the page"):
+   *   1. Fast local-only pass — fills everything already on the page.
+   *   2. SectionExpander clicks "Add" on empty repeatable sections (work
+   *      experience, education, languages) and re-runs a local-only pass
+   *      after each click, so newly-mounted rows get filled too.
+   *   3. One final pass WITH the AI tier enabled, over the now-fully-
+   *      expanded page — this is where drafted/mapped answers for anything
+   *      still unresolved (including inside the just-expanded sections) get
+   *      resolved, in a single batched API call rather than one per click.
+   */
+  async function runFillCycle(adapter, opts) {
+    await runFillPass(adapter, Object.assign({}, opts, { skipAi: true }));
+
+    if (window.SectionExpander) {
+      try {
+        const { bank } = await loadSettings();
+        if (bank) {
+          await window.SectionExpander.expandAndFill(bank, async () => {
+            await runFillPass(adapter, { force: false, skipAi: true });
+          });
+        }
+      } catch (e) {
+        // Expansion is best-effort and must never block the rest of the fill.
+      }
+    }
+
+    await runFillPass(adapter, { force: false, skipAi: false });
+  }
+
   // ---------------------------------------------------------------------
   // Record publication: child frames send up, top frame merges + renders
   // ---------------------------------------------------------------------
@@ -245,6 +360,15 @@
   }
 
   function mergeRecords(frameKey, records) {
+    // REPLACE this frame's records rather than accumulate: field ids are
+    // regenerated on every detection pass, so runFillCycle's multi-pass flow
+    // (local pass -> expansion refills -> AI pass) otherwise stacks 2-3
+    // stale copies of every field — a live Robinhood/Greenhouse run showed
+    // "70 need review" that was mostly triplicates. The latest pass is a
+    // complete snapshot of the frame, so it supersedes everything prior.
+    for (const key of [...mergedRecords.keys()]) {
+      if (key.startsWith(`${frameKey}:`)) mergedRecords.delete(key);
+    }
     for (const r of records) {
       mergedRecords.set(`${frameKey}:${r.field_id}`, Object.assign({}, r, { __frameKey: frameKey }));
     }
@@ -325,8 +449,12 @@
   function offerRefillOnNewFields(adapter) {
     if (stopFieldWatcher) stopFieldWatcher();
     stopFieldWatcher = window.Observer.startFieldWatcher(() => {
+      // Ignore mutations caused by our own fill passes (and the framework
+      // re-renders they trigger) — otherwise the "New fields detected"
+      // toast shows permanently during and after every fill.
+      if (Date.now() - lastFillActivityAt < 2500) return;
       if (IS_TOP) {
-        window.ReviewPanel.showToast('New fields detected on this page.', () => runFillPass(adapter, { force: false }));
+        window.ReviewPanel.showToast('New fields detected on this page.', () => runFillCycle(adapter, { force: false }));
       } else {
         chrome.runtime.sendMessage({ type: 'FRAME_NEW_FIELDS' });
       }
@@ -335,7 +463,7 @@
     if (IS_TOP) {
       if (stopRouteWatcher) stopRouteWatcher();
       stopRouteWatcher = window.Observer.startRouteWatcher(() => {
-        window.ReviewPanel.showToast('New page detected — fill this page?', () => runFillPass(adapter, { force: false }));
+        window.ReviewPanel.showToast('New page detected — fill this page?', () => runFillCycle(adapter, { force: false }));
       }, 700);
     }
   }
@@ -343,7 +471,7 @@
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'AUTOFILL_START') {
       const adapter = pickAdapter();
-      runFillPass(adapter, { force: !!message.force }).then(() => {
+      runFillCycle(adapter, { force: !!message.force }).then(() => {
         offerRefillOnNewFields(adapter);
         sendResponse({ ok: true });
       });

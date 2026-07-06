@@ -17,6 +17,7 @@
     "github": "https://github.com/esha7498",
     "how_heard": "Company website",
     "preferred_name": "Emily",
+    "prefix": "Ms.",
     "pronouns": "She/Her"
   },
   "education": [
@@ -140,6 +141,7 @@
     "willing_to_travel": "Yes",
     "employment_type": "Full-time",
     "languages": "English",
+    "language_proficiency": "Fluent",
     "commutable_note": "Washington, DC metro",
     "over_18": "Yes",
     "worked_here_before": "No",
@@ -155,7 +157,8 @@
     "race_ethnicity": "Decline to self-identify",
     "hispanic_latino": "Decline to self-identify",
     "veteran_status": "I am not a protected veteran",
-    "disability_status": "I do not want to answer"
+    "disability_status": "I do not want to answer",
+    "lgbtq_identify": "I don't wish to answer"
   },
   "stock_answers": {
     "why_this_company": { "mode": "NEEDS_REVIEW" },

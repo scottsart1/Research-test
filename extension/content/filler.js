@@ -28,29 +28,71 @@
   // ---------------------------------------------------------------------
 
   function setNativeValue(el, value) {
-    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (descriptor && descriptor.set) {
-      descriptor.set.call(el, value);
+    // Custom-widget guard: SuccessFactors renders comboboxes as non-input
+    // elements; calling HTMLInputElement's native setter on them throws
+    // "Illegal invocation" (observed live on an EY run). Only use the
+    // prototype setter for real inputs/textareas; everything else gets a
+    // plain property write or textContent.
+    const isInput = typeof HTMLInputElement !== 'undefined' && el instanceof HTMLInputElement;
+    const isTextArea = typeof HTMLTextAreaElement !== 'undefined' && el instanceof HTMLTextAreaElement;
+    if (isInput || isTextArea) {
+      const proto = isTextArea ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(el, value);
+      } else {
+        el.value = value;
+      }
+    } else if ('value' in el) {
+      try {
+        el.value = value;
+      } catch (e) {
+        el.textContent = String(value);
+      }
     } else {
-      el.value = value;
+      el.textContent = String(value);
     }
     ['input', 'change', 'blur'].forEach((t) => el.dispatchEvent(new Event(t, { bubbles: true })));
+  }
+
+  /**
+   * Loose equality for widget-reformatted values: phone inputs strip or add
+   * formatting ("(717) 903-4428" -> "7179034428"), so exact comparison
+   * false-alarms even though the value landed (observed live on a
+   * Greenhouse phone field, reported FAILED with the number visibly there).
+   * When both sides are phone-shaped, compare digits only.
+   */
+  function valuesEquivalent(actual, expected) {
+    if (actual === expected) return true;
+    const phoneish = /^[\d\s()+.\-]+$/;
+    if (phoneish.test(String(expected)) && phoneish.test(String(actual))) {
+      const digits = (s) => String(s).replace(/\D/g, '');
+      const de = digits(expected);
+      return de.length > 0 && digits(actual) === de;
+    }
+    return false;
   }
 
   async function setValueWithKeystrokeFallback(el, value) {
     el.focus();
     setNativeValue(el, value);
     await sleep(30);
-    if (el.value === value) return true;
+    if (valuesEquivalent(el.value, value)) return true;
 
     // Retry once with simulated per-character keystrokes for stubborn
-    // controlled inputs that ignore programmatic value assignment.
+    // controlled inputs that ignore programmatic value assignment. Uses the
+    // same guarded write as setNativeValue — the raw prototype setter throws
+    // "Illegal invocation" on custom (non-input) widgets.
     setNativeValue(el, '');
+    const isRealInput = (typeof HTMLInputElement !== 'undefined' && el instanceof HTMLInputElement) ||
+      (typeof HTMLTextAreaElement !== 'undefined' && el instanceof HTMLTextAreaElement);
     for (const ch of String(value)) {
-      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-      descriptor.set.call(el, el.value + ch);
+      if (isRealInput) {
+        const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, el.value + ch);
+      } else {
+        el.value = (el.value || '') + ch;
+      }
       el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
@@ -58,7 +100,7 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.dispatchEvent(new Event('blur', { bubbles: true }));
     await sleep(30);
-    return el.value === value;
+    return valuesEquivalent(el.value, value);
   }
 
   // ---------------------------------------------------------------------
@@ -91,6 +133,36 @@
       if (isVisibleLocal(c) && c.querySelectorAll('[role="option"]').length > 0) return c;
     }
     return null;
+  }
+
+  /**
+   * Never leave half-typed text in a combobox (spec §6 / §11#2). One plain
+   * clear proved insufficient live — a controlled widget re-rendered our
+   * typed text back ("Female" left visible in a Greenhouse gender field).
+   * Escape first (most comboboxes clear + close on it), then clear, verify,
+   * and retry once before giving up.
+   */
+  async function clearTypeaheadResidue(el) {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', bubbles: true }));
+    await sleep(60);
+    for (let attempt = 0; attempt < 2 && el.value; attempt++) {
+      setNativeValue(el, '');
+      await sleep(120);
+    }
+    document.body.click(); // close any popup left open
+  }
+
+  /** Full mouse-interaction sequence — some widgets only listen to mousedown. */
+  function openWithMouse(el) {
+    const opts = { bubbles: true, cancelable: true, view: window };
+    try {
+      el.dispatchEvent(new MouseEvent('mousedown', opts));
+      el.dispatchEvent(new MouseEvent('mouseup', opts));
+      el.dispatchEvent(new MouseEvent('click', opts));
+    } catch (e) {
+      if (typeof el.click === 'function') el.click();
+    }
   }
 
   function isVisibleLocal(el) {
@@ -149,7 +221,7 @@
 
     async select(field, el, value) {
       if (field.ui_pattern === 'button_listbox' || el.tagName.toLowerCase() === 'button') {
-        el.click();
+        openWithMouse(el);
         const listbox = await pollUntil(() => findListbox(el), 1500);
         if (!listbox) return { ok: false, note: 'listbox_did_not_open' };
         const optionEls = Array.from(listbox.querySelectorAll('[role="option"]'));
@@ -160,12 +232,24 @@
           return { ok: false, note: 'no_matching_live_option' };
         }
         optionEls[idx].click();
-        await sleep(20);
+        await sleep(150); // let the widget commit before the next field
         return { ok: true };
       }
-      // Native <select>
-      const options = Array.from(el.options || []);
-      const idx = options.findIndex((o) => textOf(o) === value || o.value === value);
+      // Native <select>. Dependent selects (State only populates after
+      // Country changes) may still be loading options when we get here —
+      // wait once for late-arriving options before giving up.
+      let options = Array.from(el.options || []);
+      let idx = options.findIndex((o) => textOf(o) === value || o.value === value);
+      if (idx === -1) {
+        await sleep(900);
+        options = Array.from(el.options || []);
+        // Options may have loaded with different casing/format than the
+        // originally-detected list; re-run the option matcher against them.
+        const OptionMatcher = root.OptionMatcher;
+        const labels = options.map(textOf);
+        const rematched = OptionMatcher ? OptionMatcher.matchOption(String(value), labels) : null;
+        idx = rematched ? labels.indexOf(rematched) : options.findIndex((o) => textOf(o) === value || o.value === value);
+      }
       if (idx === -1) return { ok: false, note: 'option_not_found_in_dom' };
       el.selectedIndex = idx;
       el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -223,25 +307,55 @@
     async typeahead(field, el, value) {
       el.focus();
       setNativeValue(el, String(value));
-      const listbox = await pollUntil(() => findListbox(el), 1500);
+      let listbox = await pollUntil(() => findListbox(el), 1200);
+
       if (!listbox) {
-        setNativeValue(el, ''); // never leave half-typed text (spec §6 / §11#2)
+        // Click-to-open combobox (SuccessFactors EEO selects open on click,
+        // not on typing — typing alone produced "no_listbox_appeared" live).
+        openWithMouse(el);
+        listbox = await pollUntil(() => findListbox(el), 1200);
+      }
+
+      if (!listbox && el.parentElement) {
+        // react-select (Greenhouse's new board) binds mousedown on the
+        // styled control WRAPPER, not the inner input — clicking the input
+        // itself never opens the menu (observed live on every select of a
+        // Robinhood application).
+        openWithMouse(el.parentElement);
+        listbox = await pollUntil(() => findListbox(el), 1500);
+      }
+
+      if (!listbox) {
+        // Not actually a typeahead? Plain inputs with aria-autocomplete but
+        // no popup behave like text — keep the typed value if it's a plain
+        // input, otherwise never leave half-typed text (spec §6 / §11#2).
+        const plainInput = el.tagName === 'INPUT' && !el.readOnly && el.getAttribute('role') !== 'combobox' && !el.getAttribute('aria-controls');
+        if (plainInput && el.value === String(value)) {
+          return { ok: true, note: 'typeahead_degraded_to_text' };
+        }
+        setNativeValue(el, '');
         return { ok: false, note: 'no_listbox_appeared' };
       }
+
       const optionEls = Array.from(listbox.querySelectorAll('[role="option"]'));
       const labels = optionEls.map(textOf);
       const OptionMatcher = root.OptionMatcher;
       const matched = OptionMatcher ? OptionMatcher.matchOption(String(value), labels) : labels.find((l) => l === value);
       if (!matched) {
-        setNativeValue(el, '');
+        await clearTypeaheadResidue(el);
         return { ok: false, note: 'no_matching_option_typed' };
       }
       optionEls[labels.indexOf(matched)].click();
-      await sleep(20);
+      await sleep(150); // let the widget commit the selection before the next field
       return { ok: true };
     },
 
     async file(field, el) {
+      // Only genuine file inputs accept DataTransfer; anything else that
+      // got classified 'file' is a custom widget the human must click.
+      if (!(el && el.tagName === 'INPUT' && el.getAttribute('type') === 'file')) {
+        return { ok: false, note: 'attach_manually_custom_widget' };
+      }
       if (typeof chrome === 'undefined' || !chrome.storage) {
         return { ok: false, note: 'attach_manually' };
       }
@@ -369,7 +483,7 @@
     return outcomes;
   }
 
-  const Filler = { fillField, fillSequential, setNativeValue, verifyField };
+  const Filler = { fillField, fillSequential, setNativeValue, verifyField, valuesEquivalent };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = Filler;

@@ -23,9 +23,17 @@ configure, and test what was built.
    - Review any remaining `«placeholder»` values (EEO choices are the main
      ones left — see `data/default-answer-bank.json`). Everything else
      (address, salary, YoE for niche skills, etc.) already has a real value.
-   - Optionally enable the Claude API fallback and paste an Anthropic API
-     key (only used for question→key *mapping*, never for generating
-     answers, and never for work-authorization questions).
+   - Optionally enable **Claude AI answering** and paste an Anthropic API
+     key. When on, every question local matching can't confidently answer
+     is sent to Claude to understand what it's really asking; Claude can
+     map it to an existing answer, pick the correct dropdown option, or —
+     with the drafting toggle on — write a first-person answer to
+     qualitative questions ("Why this role?", "Reason for leaving")
+     grounded in Emily's profile and the job posting. Pick Haiku 4.5
+     (fast/cheap) or Sonnet 5 (better drafting). AI never touches work
+     authorization, EEO demographics, salary figures, clearance, criminal
+     history, or logins/passwords, and every AI-drafted answer is pinned
+     in the review panel with a 🤖 marker for reading before submit.
 
 ## Use it
 
@@ -76,11 +84,16 @@ form.
   §7 (Workday, Greenhouse, iCIMS, Taleo/Oracle Recruiting, Lever, Ashby,
   SmartRecruiters, plus the thin Tier 3 hint-adapters and the generic
   fallback).
-- **Phase 4**: Claude Haiku Tier-4 fallback is wired end-to-end
-  (background/service-worker.js batches unmatched fields, enforces the
-  work-authorization exclusion independently as defense in depth, and never
-  lets the API return a value — only a key, which is then run back through
-  the same option-matching/placeholder-guard pipeline as local tiers).
+- **Phase 4 / AI answering** (extended beyond the original spec at the
+  owner's direction): background/service-worker.js batches every field the
+  local tiers left UNMATCHED or NEEDS_REVIEW (minus locked attestations)
+  into one Claude call with the job page's title/excerpt and a whitelisted
+  candidate profile. The model returns one action per field — `map` to a
+  bank key, `option` (validated locally against the field's real options),
+  `draft` (free-text only, forbidden-category-filtered, length-capped,
+  flagged 🤖 in the panel), or `skip`. The work-authorization exclusion is
+  enforced independently in the worker and again in the content-side
+  resolver as defense in depth.
   Keyboard shortcut, snapshot/restore ("Clear all fills"), and the Tier 3
   hint-adapters are implemented. The resume-attachment `DataTransfer`
   injection (spec §6's Phase 4 "stretch" item) is implemented too, now that
@@ -119,10 +132,58 @@ form.
   optional Claude Tier-4 fallback, and whatever remains lands in the panel
   as NEEDS_REVIEW with a "Copy skipped questions" button. Free-form essay
   prompts ("Why this company?") are deliberately never auto-answered.
+- **"Clickable" — expanding empty repeatable sections**: SuccessFactors-
+  style profiles (EY) render Work Experience/Education/Language sections as
+  empty with a bare "+ Add" control until clicked — nothing to fill exists
+  until then. `content/section-expander.js` finds "Add" controls whose
+  nearest preceding heading matches a whitelisted repeatable-section name
+  (work experience, education, languages), clicks them (capped at 6 clicks
+  per pass, budgeted per section from how many bank entries actually
+  exist — never over-adds), waits for the new fields to mount, and refills.
+  Guardrails: it refuses to click anything whose text matches
+  save/submit/apply/next/continue/delete/upload, so it can never advance or
+  submit a form (spec §11#10 holds even here). The full cycle is: fast
+  local-only fill → expand sections, refilling after each click → one
+  final pass with the AI tier enabled over the now-fully-expanded page, so
+  Claude sees the real field count instead of being batched once per click.
+- **Live-run bug fixes** (from a Bowhead/iCIMS run, an EY/SuccessFactors
+  run, and a Nüvitek/Pinpoint run):
+  - *Silent misfill*: Pinpoint renders some labels after their input rather
+    than before, and the naive "nearest text" walk handed one field's label
+    to the next — a City input got filled with "Emily" because it inherited
+    the neighboring First Name field's label. Fixed two ways: label
+    extraction now tracks which text nodes are already claimed as another
+    field's label (falling back to the following sibling when the
+    preceding one is taken), and a new `attrConflictGuard` in the matcher
+    cross-checks the label-derived match against the field's own
+    name/id attributes — if they name different categories (label says
+    "First Name", attribute says "city"), it's NEEDS_REVIEW, not a guess.
+  - *"Illegal invocation" crash*: SuccessFactors renders some comboboxes as
+    non-`<input>` elements; `setNativeValue` called `HTMLInputElement`'s
+    native setter on them and threw. It now only uses the native-setter
+    technique on real inputs/textareas and falls back to a plain property
+    write otherwise.
+  - *Combobox never opened*: SuccessFactors' EEO selects open their listbox
+    on click, not on typing — typing-only produced "no_listbox_appeared"
+    for every one of them. The typeahead strategy now also tries a click.
+  - *$-bucketed compensation ranges parsed wrong*: `$90,001-$100,000`
+    fragmented into small numbers before bucket parsing stripped the
+    currency symbols and thousands separators; fixed in `lib/fuzzy.js`.
+    Numeric-string bank values ("95000") now get the same bucket treatment
+    as real numbers.
+  - *Rule gaps*: "State/Province" (with the slash) and "Country/Region"
+    weren't matching because normalization strips the slash, turning them
+    into a space the old regex didn't anticipate; the resume-upload rule
+    was matching unrelated "Language" selects via leaked page prose (now
+    gated to real file inputs); added rules for salutation prefixes (only
+    when the options actually look like salutations), company-alumni
+    screeners, and a `skip_optional` outcome for deliberately-blank fields
+    (middle name, address line 2, conditional "If yes..." follow-ups) so
+    they render as a neutral ➖ instead of review-queue noise.
 - Live-ATS end-to-end verification (spec §10 Phase 3 acceptance criterion:
   "one live posting per ATS with zero incorrect fills") should be repeated
-  after any rule change — the iCIMS defects above were only caught by a
-  live run.
+  after any rule change — every defect above was only caught by a live run,
+  not by the unit suite alone.
 
 ## File map
 
