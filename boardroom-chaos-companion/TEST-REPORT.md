@@ -35,7 +35,11 @@ Playwright (Chromium) rendered every tab, every Market and Settings section, the
 
 - Live calls to Claude, OpenAI, Kimi, or DeepSeek with real keys (all provider tests use local mock endpoints).
 - Whether each provider's public API permits direct browser (CORS) calls; the desktop server route and the Android app are unaffected by CORS.
-- The iOS archive job (requires a macOS runner) and physical microphone permission prompts on Android or iOS.
+- Physical microphone permission prompts on Android or iOS.
+
+## GitHub Actions run on the pushed commit
+
+Workflow run 33981565385 on commit d44a70b: **Web app checks and tests** passed, **Android APK** built and uploaded (artifact `boardroom-chaos-companion-android-apk`), and the **iOS unsigned archive** succeeded on the macOS runner with Xcode 26.6 and uploaded `boardroom-chaos-companion-ios-unsigned-ipa`. Neither package was installed on a physical device.
 
 ## Previous report (v1.4.1)
 
