@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#13241d" />
+  <meta name="description" content="A four-player Monopoly companion with whole-dollar cash, dynamic bank lending, random stocks, delayed settlements, mergers, voice commands, and an auditable AI rule judge powered by your own Claude, GPT, Kimi, or DeepSeek key." />
+  <title>Boardroom Chaos Companion</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">BC</div>
+      <div>
+        <strong>Boardroom Chaos</strong>
+        <span id="gameSubtitle">Local-first game companion</span>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button id="installBtn" class="ghost hidden">Install</button>
+      <button id="voiceBtn" class="voice-shortcut" title="Open voice clerk"><span aria-hidden="true">🎙</span><b>Voice</b></button>
+      <button id="undoBtn" class="ghost" title="Undo a clerical mistake"><span aria-hidden="true">↶</span><b>Undo</b></button>
+      <button id="settingsBtn" class="ghost settings-shortcut" title="Settings and AI providers" aria-label="Settings"><span aria-hidden="true">⚙</span><b>Settings</b></button>
+      <button id="menuBtn" class="ghost" title="Game menu"><span aria-hidden="true">☰</span><b>Game</b></button>
+    </div>
+  </header>
+
+  <main id="app" class="app-shell" aria-live="polite"></main>
+
+  <nav class="bottom-nav" aria-label="Primary">
+    <button data-tab="dashboard" class="active"><span>⌂</span>Home</button>
+    <button data-tab="actions"><span>⇄</span>Actions</button>
+    <button data-tab="market"><span>📈</span>Market</button>
+    <button data-tab="deals"><span>🤝</span>Deals</button>
+    <button data-tab="legal"><span>⚖</span>Legal</button>
+    <button data-tab="assets"><span>🏘</span>Assets</button>
+    <button data-tab="ledger"><span>☷</span>Ledger</button>
+  </nav>
+
+  <dialog id="setupDialog" class="modal setup-modal">
+    <form id="setupForm" method="dialog">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">New game</p>
+          <h1>Start the corporate nonsense</h1>
+        </div>
+      </div>
+      <label>Game name<input id="gameName" value="Thursday Night Hostile Takeover" maxlength="60" /></label>
+      <div id="playerInputs" class="player-inputs"></div>
+      <div class="button-row right"><button type="submit" class="primary">Create four-company game</button></div>
+      <p class="fine-print">Boardroom Chaos is balanced for exactly four players. Data stays on this device unless you export it. Add your own Claude, GPT, Kimi, or DeepSeek key in Settings for AI approval conditions, voice interpretation, and rule arbitration.</p>
+    </form>
+  </dialog>
+
+  <dialog id="gameDialog" class="modal">
+    <form method="dialog">
+      <div class="modal-head"><h2>Game controls</h2><button value="cancel" class="icon-btn" aria-label="Close">×</button></div>
+      <div class="stack">
+        <button id="exportBtn" type="button" class="secondary">Export game file</button>
+        <label class="file-button secondary">Import game file<input id="importInput" type="file" accept="application/json" hidden /></label>
+        <button type="button" class="secondary" data-dialog-go="settings">Settings · AI providers &amp; keys</button>
+        <button type="button" class="secondary" data-dialog-go="rules">Open house rules</button>
+        <button id="newGameBtn" type="button" class="danger">Start a new game</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirmDialog" class="modal confirm-modal">
+    <form method="dialog">
+      <h2 id="confirmTitle">Confirm</h2>
+      <p id="confirmText"></p>
+      <div class="button-row right"><button value="cancel" class="secondary">Cancel</button><button id="confirmActionBtn" value="default" class="primary">Confirm</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

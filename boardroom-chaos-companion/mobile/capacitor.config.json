@@ -1,0 +1,17 @@
+{
+  "appId": "com.boardroomchaos.companion",
+  "appName": "Boardroom Chaos",
+  "webDir": "../public",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#13241d"
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "backgroundColor": "#13241d"
+  }
+}
