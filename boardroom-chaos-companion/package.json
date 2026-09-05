@@ -1,0 +1,15 @@
+{
+  "name": "boardroom-chaos-companion",
+  "version": "1.4.1",
+  "private": true,
+  "type": "module",
+  "description": "Streamlined four-player Monopoly companion with a quick-play dashboard, unified legal desk, corporate markets, voice transcription, and an auditable AI judge.",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "check": "node --check server.js && node --check public/app.js && node --check public/voice.js && node --check public/engine.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
