@@ -1,0 +1,105 @@
+name: Boardroom Chaos Companion builds
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["bcc-v*"]
+    paths:
+      - "boardroom-chaos-companion/**"
+      - ".github/workflows/boardroom-mobile.yml"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: boardroom-chaos-companion
+
+jobs:
+  test:
+    name: Web app checks and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run check
+      - run: npm test
+
+  android:
+    name: Android APK (debug, sideloadable)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: Install Capacitor
+        working-directory: boardroom-chaos-companion/mobile
+        run: npm ci
+      - name: Copy web assets into the Android project
+        working-directory: boardroom-chaos-companion/mobile
+        run: npx cap sync android
+      - name: Build debug APK
+        working-directory: boardroom-chaos-companion/mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Rename APK
+        run: cp mobile/android/app/build/outputs/apk/debug/app-debug.apk "boardroom-chaos-companion-${GITHUB_REF_NAME//\//-}-debug.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boardroom-chaos-companion-android-apk
+          path: boardroom-chaos-companion/boardroom-chaos-companion-*-debug.apk
+          if-no-files-found: error
+      - name: Attach APK to the release
+        if: startsWith(github.ref, 'refs/tags/bcc-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: boardroom-chaos-companion/boardroom-chaos-companion-*-debug.apk
+          generate_release_notes: true
+
+  ios:
+    # Builds an UNSIGNED .ipa on a macOS runner. Installing it on a phone needs an Apple ID
+    # sideloading tool (AltStore, Sideloadly) or, for TestFlight / the App Store, an Apple
+    # Developer Program membership and signing certificates added as repository secrets.
+    name: iOS app (unsigned archive)
+    needs: test
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Capacitor
+        working-directory: boardroom-chaos-companion/mobile
+        run: npm ci
+      - name: Copy web assets into the iOS project
+        working-directory: boardroom-chaos-companion/mobile
+        run: npx cap sync ios
+      - name: Archive without code signing
+        working-directory: boardroom-chaos-companion/mobile/ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphoneos \
+            -archivePath "$PWD/build/App.xcarchive" archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+      - name: Package unsigned IPA
+        working-directory: boardroom-chaos-companion/mobile/ios/App
+        run: |
+          mkdir -p build/Payload
+          cp -R build/App.xcarchive/Products/Applications/App.app build/Payload/
+          (cd build && zip -qr "boardroom-chaos-companion-${GITHUB_REF_NAME//\//-}-unsigned.ipa" Payload)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boardroom-chaos-companion-ios-unsigned-ipa
+          path: boardroom-chaos-companion/mobile/ios/App/build/*.ipa
+          if-no-files-found: error
+      - name: Attach IPA to the release
+        if: startsWith(github.ref, 'refs/tags/bcc-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: boardroom-chaos-companion/mobile/ios/App/build/*.ipa

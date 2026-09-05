@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#13241d" />
-  <meta name="description" content="A four-player Monopoly companion with whole-dollar cash, dynamic bank lending, random stocks, delayed settlements, mergers, OpenAI transcription, and an auditable AI rule judge." />
+  <meta name="description" content="A four-player Monopoly companion with whole-dollar cash, dynamic bank lending, random stocks, delayed settlements, mergers, voice commands, and an auditable AI rule judge powered by your own Claude, GPT, Kimi, or DeepSeek key." />
   <title>Boardroom Chaos Companion</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon-192.png" />
@@ -21,9 +21,10 @@
     </div>
     <div class="top-actions">
       <button id="installBtn" class="ghost hidden">Install</button>
-      <button id="voiceBtn" class="voice-shortcut" title="Open voice clerk">🎙 Voice</button>
-      <button id="undoBtn" class="ghost" title="Undo a clerical mistake">Undo</button>
-      <button id="menuBtn" class="ghost">Game</button>
+      <button id="voiceBtn" class="voice-shortcut" title="Open voice clerk"><span aria-hidden="true">🎙</span><b>Voice</b></button>
+      <button id="undoBtn" class="ghost" title="Undo a clerical mistake"><span aria-hidden="true">↶</span><b>Undo</b></button>
+      <button id="settingsBtn" class="ghost settings-shortcut" title="Settings and AI providers" aria-label="Settings"><span aria-hidden="true">⚙</span><b>Settings</b></button>
+      <button id="menuBtn" class="ghost" title="Game menu"><span aria-hidden="true">☰</span><b>Game</b></button>
     </div>
   </header>
 
@@ -50,7 +51,7 @@
       <label>Game name<input id="gameName" value="Thursday Night Hostile Takeover" maxlength="60" /></label>
       <div id="playerInputs" class="player-inputs"></div>
       <div class="button-row right"><button type="submit" class="primary">Create four-company game</button></div>
-      <p class="fine-print">Boardroom Chaos is balanced for exactly four players. Data stays in this browser unless you export it. DeepSeek is used for optional approval conditions and rule arbitration.</p>
+      <p class="fine-print">Boardroom Chaos is balanced for exactly four players. Data stays on this device unless you export it. Add your own Claude, GPT, Kimi, or DeepSeek key in Settings for AI approval conditions, voice interpretation, and rule arbitration.</p>
     </form>
   </dialog>
 
@@ -60,18 +61,10 @@
       <div class="stack">
         <button id="exportBtn" type="button" class="secondary">Export game file</button>
         <label class="file-button secondary">Import game file<input id="importInput" type="file" accept="application/json" hidden /></label>
+        <button type="button" class="secondary" data-dialog-go="settings">Settings · AI providers &amp; keys</button>
         <button type="button" class="secondary" data-dialog-go="rules">Open house rules</button>
         <button id="newGameBtn" type="button" class="danger">Start a new game</button>
       </div>
-      <hr />
-      <label>Judge authority
-        <select id="judgeModeSetting">
-          <option value="advisory">Advisory — table decides</option>
-          <option value="binding">Binding — one appeal allowed</option>
-        </select>
-      </label>
-      <label class="toggle-row"><input id="freeParkingSetting" type="checkbox" /> Free Parking jackpot</label>
-      <label class="toggle-row"><input id="voiceReadbackSetting" type="checkbox" /> Speak confirmations aloud</label>
     </form>
   </dialog>
 

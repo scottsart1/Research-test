@@ -227,3 +227,49 @@ test("server routes exactly, maps client mistakes to 4xx, and keeps static files
   assert.equal(health.deepseekConfigured, true);
   assert.equal(health.transcription.configured, false);
 });
+
+test("a provider key entered in the app is proxied to Claude, and the server env stays the fallback", { timeout: 15_000 }, async t => {
+  const mockPort = await freePort();
+  const seen = [];
+  const mock = http.createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    seen.push({ url: req.url, headers: req.headers, body: JSON.parse(body || "{}") });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    if (req.url === "/v1/messages") return res.end(JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ ok: true, greeting: "Hello from Claude." }) }], stop_reason: "end_turn" }));
+    return res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ok: true, greeting: "Hello from DeepSeek." }) } }] }));
+  });
+  await new Promise((resolve, reject) => mock.listen(mockPort, "127.0.0.1", resolve).once("error", reject));
+  t.after(() => new Promise(resolve => mock.close(resolve)));
+  const { base } = await startServer(t, { DEEPSEEK_API_KEY: "env-key", DEEPSEEK_BASE_URL: `http://127.0.0.1:${mockPort}` });
+
+  const viaClaude = await fetch(`${base}/api/ai/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ai: { provider: "claude", apiKey: "sk-ant-device", model: "claude-opus-5", baseUrl: `http://127.0.0.1:${mockPort}` } }) });
+  const claudePayload = await viaClaude.json();
+  assert.equal(viaClaude.status, 200, JSON.stringify(claudePayload));
+  assert.equal(claudePayload.provider, "claude");
+  assert.equal(claudePayload.greeting, "Hello from Claude.");
+  assert.equal(seen.at(-1).url, "/v1/messages");
+  assert.equal(seen.at(-1).headers["x-api-key"], "sk-ant-device");
+  assert.equal(seen.at(-1).headers["anthropic-dangerous-direct-browser-access"], undefined);
+
+  const viaEnv = await fetch(`${base}/api/ai/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const envPayload = await viaEnv.json();
+  assert.equal(viaEnv.status, 200);
+  assert.equal(envPayload.provider, "deepseek");
+  assert.equal(seen.at(-1).url, "/chat/completions");
+  assert.equal(seen.at(-1).headers.authorization, "Bearer env-key");
+
+  const health = await (await fetch(`${base}/api/health`)).json();
+  assert.equal(health.ai.configured, true);
+  assert.equal(health.ai.provider, "deepseek");
+  assert.equal(health.providers.length, 4);
+});
+
+test("without any key the AI endpoints explain how to add one", { timeout: 15_000 }, async t => {
+  const { base } = await startServer(t, { DEEPSEEK_API_KEY: "", AI_API_KEY: "", OPENAI_API_KEY: "" });
+  const response = await fetch(`${base}/api/voice/interpret`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ transcript: "hi", context: { game: {}, players: [], properties: [] } }) });
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error, /Settings/);
+  const health = await (await fetch(`${base}/api/health`)).json();
+  assert.equal(health.ai.configured, false);
+});

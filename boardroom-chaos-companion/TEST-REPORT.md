@@ -1,4 +1,43 @@
-# Boardroom Chaos Companion v1.4.1 — Verification Report
+# Boardroom Chaos Companion v1.5.0 — Verification Report
+
+Date: September 5, 2026
+
+## Automated result (v1.5.0)
+
+```text
+npm run check
+npm test
+```
+
+- Syntax checks passed for the server and every client module (`public/*.js`, `public/js/*.js`, `public/js/ui/*.js`).
+- **58 tests passed** (48 from v1.4.1 plus 10 new).
+- 0 failed, skipped, cancelled, or marked todo.
+
+## New v1.5.0 coverage
+
+- Provider configs normalize to per-provider defaults; unknown providers are rejected.
+- Claude requests use the Messages API with the browser opt-in header only in direct mode; OpenAI, Kimi, and DeepSeek share the chat-completions shape with provider-specific token and reasoning fields.
+- Responses are parsed per provider with readable key, refusal, and empty-response errors; JSON is extracted through code fences and prose.
+- Voice-plan, condition, and judgement normalizers whitelist model output identically for browser and server.
+- A key entered in the app is proxied to Claude by the server; the server's environment key remains the fallback; `/api/health` reports the active provider and all four options.
+- With no key anywhere, AI endpoints return 503 with instructions pointing to Settings.
+- The client is organised into `store`, `ai`, `recorder`, `helpers`, and per-page `ui` modules; the Settings page names all four providers and keeps keys out of game state.
+
+## Browser render check
+
+Playwright (Chromium) rendered every tab, every Market and Settings section, the Voice and Legal pages before and after saving a provider key, and the Game dialog at 1280×860 and 390×844 with **no page errors or console errors**.
+
+## Android build check
+
+`npx cap sync android && ./gradlew assembleDebug` succeeded on Linux with JDK 21 and Android SDK 35, producing `mobile/releases/boardroom-chaos-companion-v1.5.0-debug.apk`. The APK was not run on a physical device in this environment.
+
+## Not verified here
+
+- Live calls to Claude, OpenAI, Kimi, or DeepSeek with real keys (all provider tests use local mock endpoints).
+- Whether each provider's public API permits direct browser (CORS) calls; the desktop server route and the Android app are unaffected by CORS.
+- The iOS archive job (requires a macOS runner) and physical microphone permission prompts on Android or iOS.
+
+## Previous report (v1.4.1)
 
 Date: September 5, 2026
 

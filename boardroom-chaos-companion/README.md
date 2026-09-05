@@ -1,8 +1,32 @@
-# Boardroom Chaos Companion v1.4
+# Boardroom Chaos Companion v1.5
 
-A local-first companion for a **four-player conventional Monopoly game** with quick game-day controls, four listed player-companies, random stock prices, capital raises, voting shares, rent dividends, formal approvals, two-round settlement, mergers, taxes, Free Parking, antitrust, dynamic bank credit, OpenAI audio transcription, and DeepSeek interpretation and judging.
+A local-first companion for a **four-player conventional Monopoly game** with quick game-day controls, four listed player-companies, random stock prices, capital raises, voting shares, rent dividends, formal approvals, two-round settlement, mergers, taxes, Free Parking, antitrust, dynamic bank credit, voice commands, and an auditable AI clerk and judge powered by **your own Claude, GPT, Kimi, or DeepSeek key**.
 
-The app is designed for one shared laptop or tablet acting as banker, exchange, registrar, clerk, and official ledger.
+The app runs as a website on one shared laptop, as an installable web app, and as an Android app (with an iOS project for Mac builds). See `mobile/README.md` for the phone and tablet builds.
+
+## What changed in v1.5
+
+### Bring your own AI provider, in the app
+
+- A new **Settings** page (gear icon in the top bar, or Game → Settings) lets a player pick **Claude (Anthropic), GPT (OpenAI), Kimi (Moonshot AI), or DeepSeek**, paste the API key, choose a model, and press **Test connection**.
+- Keys are stored only on that device (`localStorage`, or session-only if "Remember keys" is unchecked). They are never written into exported game files, and "Forget keys" wipes them.
+- Requests are routed automatically: through the local Node server when it is reachable (the laptop setup), or **directly from the device to the provider** in the installed app or on any static host. The routing can be forced either way in Settings → Game.
+- The server still honours environment variables as a fallback for tables that prefer not to type keys: generic `AI_PROVIDER`, `AI_API_KEY`, `AI_MODEL`, `AI_BASE_URL`, `AI_REASONING_EFFORT`, plus the older `DEEPSEEK_*` names. A key entered in the app takes precedence.
+- Prompts, JSON normalizers, and per-provider request shapes live in two shared modules (`public/ai-prompts.js`, `public/ai-providers.js`) used by both the browser and the server, so every path produces the same whitelisted results.
+- Voice transcription can use OpenAI (with a key) or the browser's **built-in speech recognition** (Chrome, including Android) with no key at all. Mode is chosen in Settings → Voice.
+
+### Reorganized, cleaner interface
+
+- The client is split into modules under `public/js/`: `store.js` (state, persistence, current view), `ai.js` (provider client), `recorder.js` (microphone and speech recognition), `helpers.js`, and one file per page under `ui/`. `app.js` only wires events.
+- The long Market page is now sectioned: **Exchange · Bank · File · Governance**, remembered per session.
+- Settings has its own sections: **AI provider · Voice · Game · Data & about**. The Game dialog is reduced to export, import, settings, rules, and new game.
+- The Voice page shows the three-stage pipeline (transcribe → interpret → confirm) with live status for each stage, and the Legal page shows which provider will rule. Both link to Settings when nothing is configured.
+- Phone layout: icon-only top bar, styled party checkboxes, and pill-shaped section tabs that scroll horizontally.
+
+### Android and iOS
+
+- `mobile/` wraps the web app with Capacitor. A debug APK built from this source is in `mobile/releases/`, and `.github/workflows/boardroom-mobile.yml` rebuilds it on every push and attaches it to a GitHub Release on `bcc-v*` tags.
+- The iOS project is generated as well; building and installing it needs a Mac or the macOS CI job plus an Apple ID or developer account. Details and the "Add to Home Screen" alternative are in `mobile/README.md`.
 
 ## What changed in v1.4.1
 
@@ -132,33 +156,32 @@ A company gets at most one antitrust review after a merger, all four railroads, 
 
 ## Voice architecture
 
-The voice pipeline now separates recognition from reasoning:
+The voice pipeline separates recognition from reasoning:
 
-1. The browser records or selects an audio file.
-2. The local server sends that audio to OpenAI for transcription.
+1. The browser records audio, selects an audio file, or listens with its built-in speech recognition.
+2. Recorded audio goes to OpenAI for transcription (through the local server, or directly from the device in the app).
 3. The transcript is shown to the players.
-4. DeepSeek interprets detailed game intent and drafts contracts or rulings.
+4. The chosen reasoning provider (Claude, GPT, Kimi, or DeepSeek) interprets game intent and drafts contracts, conditions, or rulings.
 5. The deterministic engine validates the proposed action.
 6. Players visually confirm consequential changes.
 
-OpenAI receives audio for transcription. DeepSeek receives the transcript and compact game context—not the raw audio.
+Only OpenAI ever receives audio. The reasoning provider receives the transcript and compact game context, not the raw audio.
 
-### Required environment variables
+### Keys: in the app or on the server
 
-For OpenAI transcription:
+The simplest setup is to open **Settings → AI provider** in the app and paste a key. Nothing else is required.
+
+Optionally, the local server can hold keys in environment variables so every browser on the table shares them:
 
 ```text
-OPENAI_API_KEY=your-real-openai-key
+AI_PROVIDER=claude            # claude | openai | kimi | deepseek
+AI_API_KEY=your-real-key
+AI_MODEL=claude-opus-5        # optional, provider default when blank
+OPENAI_API_KEY=your-openai-key            # optional, enables audio transcription
 OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe
 ```
 
-For DeepSeek interpretation and judging:
-
-```text
-DEEPSEEK_API_KEY=your-real-deepseek-key
-DEEPSEEK_MODEL=deepseek-v4-pro
-DEEPSEEK_REASONING_EFFORT=high
-```
+The v1.3/v1.4 variables `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, and `DEEPSEEK_REASONING_EFFORT` still work when `AI_API_KEY` is not set.
 
 Restart PowerShell and the server after changing Windows environment variables. Check configuration at:
 
@@ -166,7 +189,7 @@ Restart PowerShell and the server after changing Windows environment variables. 
 http://localhost:4173/api/health
 ```
 
-`deepseekConfigured: true` confirms only that DeepSeek credentials are available. `transcription.configured: true` confirms only that the OpenAI key is available. Neither proves that a particular tablet browser granted microphone access.
+`ai.configured: true` means the server has a reasoning key; `transcription.configured: true` means it has an OpenAI key for audio. Neither proves that a particular tablet browser granted microphone access; the Voice page shows the live status of each stage.
 
 ## Run on Windows
 
@@ -210,7 +233,7 @@ npm.cmd run check
 npm.cmd test
 ```
 
-The v1.4.1 suite contains **48 passing tests** covering:
+The v1.5 suite contains **58 passing tests** covering:
 
 - Exactly-four-player setup and all-four-player net-worth breakdowns
 - Passed GO bank payment and ledger recording
@@ -235,16 +258,22 @@ The v1.4.1 suite contains **48 passing tests** covering:
 - Condition redefinition resetting consent and settlement
 - Merger turn hand-off and policy cancellation
 - Server routing, error statuses, body limits, and static-path containment
+- Per-provider request shapes (Claude Messages API, OpenAI-compatible chat) and response parsing
+- Device-entered keys proxied by the server, with server environment keys as the fallback
+- Client module organisation and the Settings page
 
 ## Key files
 
 - `public/engine.js` — deterministic game, market, bank, tax, merger, and antitrust engine
-- `public/app.js` — shared-screen interface and confirmation flows
-- `public/voice.js` — browser recording and OpenAI transcription client
+- `public/app.js` — entry point that wires DOM events to the engine and UI modules
+- `public/js/store.js`, `public/js/ai.js`, `public/js/recorder.js`, `public/js/helpers.js` — state, AI client, microphone/speech, utilities
+- `public/js/ui/*.js` — one module per page (dashboard, actions, market, deals, legal, assets, ledger, rules, voice, settings)
+- `public/ai-providers.js`, `public/ai-prompts.js` — provider request builders, prompts, and normalizers shared with the server
 - `public/rules.js` — canonical numbered rules
 - `RULES.md` — readable house rulebook
-- `server.js` — local server, OpenAI transcription proxy, and DeepSeek proxy
-- `tests/` — engine and endpoint pressure tests
+- `server.js` — local server, static files, OpenAI transcription proxy, and multi-provider AI proxy
+- `mobile/` — Capacitor wrapper, Android project, iOS project, prebuilt debug APK
+- `tests/` — engine, provider, UI structure, and endpoint tests
 
 ## Private-use note
 
